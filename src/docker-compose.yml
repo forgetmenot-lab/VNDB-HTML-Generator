@@ -1,0 +1,6 @@
+services:
+  vndb-proxy:
+    build: .
+    ports:
+      - "8080:3737"
+    restart: unless-stopped

@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VNDB → HTML Generator v1.1</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap');
+  :root {
+    --bg:#0f0f13;--surface:#1a1a22;--border:#2e2e3e;
+    --accent:#7c6af7;--accent2:#a78bfa;--text:#e2e2f0;
+    --muted:#8888aa;--success:#4ade80;--error:#f87171;--warn:#fbbf24;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{height:100%;overflow:hidden;}
+  body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column;}
+
+  /* 헤더 */
+  .app-header{flex-shrink:0;background:#13131a;border-bottom:1px solid var(--border);padding:11px 24px;display:flex;align-items:center;justify-content:space-between;}
+  .app-header h1{font-family:'JetBrains Mono',monospace;font-size:1.1rem;font-weight:600;color:var(--accent2);}
+  .app-header h1 span{font-size:.72rem;color:var(--muted);margin-left:8px;font-weight:400;}
+  .server-status{display:flex;align-items:center;gap:6px;}
+  .status-dot{width:8px;height:8px;border-radius:50%;background:var(--border);}
+  .status-dot.ok{background:var(--success);}
+  .status-dot.fail{background:var(--error);}
+  .status-text{font-size:.72rem;color:var(--muted);font-family:'JetBrains Mono',monospace;}
+
+  /* 바디 2컬럼 */
+  .app-body{flex:1;display:grid;grid-template-columns:1fr 1fr;overflow:hidden;}
+
+  /* 공통 패널 */
+  .panel{padding:18px 20px;display:flex;flex-direction:column;gap:14px;overflow:hidden;}
+  .panel-left{border-right:1px solid var(--border);}
+
+  /* 레이블 */
+  .label{font-size:.68rem;color:var(--muted);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px;}
+
+  /* 입력 */
+  input[type=text],input[type=password]{width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:.85rem;padding:9px 12px;border-radius:8px;outline:none;transition:border-color .2s;}
+  input:focus{border-color:var(--accent);}
+
+  /* 모델 드롭다운 */
+  select{width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:.82rem;padding:0 12px;border-radius:8px;outline:none;cursor:pointer;height:38px;}
+  select:focus{border-color:var(--accent);}
+
+  /* API Key + 모델 한 줄 */
+  .key-model-row{display:flex;gap:10px;align-items:flex-start;}
+  .key-model-row .key-col{flex:1;}
+  .key-model-row .model-col{flex-shrink:0;}
+
+  /* 눈 아이콘 버튼 */
+  .eye-btn{background:none;border:none;cursor:pointer;padding:0 4px;color:var(--muted);display:flex;align-items:center;transition:color .2s;flex-shrink:0;}
+  .eye-btn:hover{color:var(--text);}
+  .key-input-wrap{display:flex;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:8px;transition:border-color .2s;height:38px;}
+  .key-input-wrap:focus-within{border-color:var(--accent);}
+  .key-input-wrap input{border:none;background:transparent;outline:none;flex:1;padding:0 12px;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:.85rem;height:100%;}
+
+  /* 저장 배지 */
+  .save-badge{font-size:.68rem;color:var(--success);font-family:'JetBrains Mono',monospace;opacity:0;transition:opacity .3s;white-space:nowrap;}
+  .save-badge.show{opacity:1;}
+
+  /* 토글 스위치 */
+  .toggle-wrap{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;}
+  .toggle-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+  .toggle-label{font-size:.88rem;color:var(--text);}
+  .toggle-switch{width:36px;height:20px;border-radius:10px;background:var(--border);position:relative;cursor:pointer;transition:background .2s;flex-shrink:0;}
+  .toggle-switch.on{background:var(--accent);}
+  .toggle-switch::after{content:'';width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;}
+  .toggle-switch.on::after{left:18px;}
+
+  /* 세그먼트 버튼 */
+  .segment{display:flex;background:var(--bg);border-radius:7px;padding:3px;gap:3px;}
+  .seg-btn{flex:1;padding:6px 0;text-align:center;font-size:.78rem;border-radius:5px;cursor:pointer;color:var(--muted);transition:background .2s,color .2s;}
+  .seg-btn.active{background:var(--accent);color:#fff;}
+
+  /* URL 행 */
+  .url-row{display:flex;gap:8px;}
+  .url-row input{flex:1;}
+
+  /* 버튼 */
+  button.primary{background:var(--accent);color:#fff;border:none;padding:10px 20px;border-radius:8px;font-family:'Noto Sans KR',sans-serif;font-size:.88rem;font-weight:700;cursor:pointer;white-space:nowrap;transition:background .15s;}
+  button.primary:hover{background:var(--accent2);}
+  button.primary:disabled{background:var(--border);color:var(--muted);cursor:not-allowed;}
+  button.secondary{background:transparent;border:1px solid var(--border);color:var(--text);padding:10px 20px;border-radius:8px;font-family:'Noto Sans KR',sans-serif;font-size:.85rem;cursor:pointer;transition:border-color .2s;}
+  button.secondary:hover{border-color:var(--accent);}
+
+  /* 로그 박스 */
+  .log-box{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-family:'JetBrains Mono',monospace;font-size:.74rem;line-height:1.95;overflow-y:auto;min-height:0;}
+  .log-step.ok::before{content:"✓ ";color:var(--success);}
+  .log-step.fail::before{content:"✗ ";color:var(--error);}
+  .log-step.run::before{content:"⟳ ";color:var(--warn);}
+
+  /* 코드박스 */
+  .code-box{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px;font-family:'JetBrains Mono',monospace;font-size:.76rem;line-height:1.75;white-space:pre-wrap;word-break:break-all;color:#c8c8e8;overflow-y:auto;min-height:0;}
+
+  /* 복사 메시지 */
+  .copy-msg-box{background:rgba(74,222,128,.07);border:1px solid rgba(74,222,128,.22);border-radius:8px;padding:9px 14px;display:flex;align-items:center;gap:8px;opacity:0;transition:opacity .3s;pointer-events:none;}
+  .copy-msg-box.show{opacity:1;}
+  .copy-msg-box span{font-size:.78rem;color:var(--success);font-family:'JetBrains Mono',monospace;}
+
+  /* 버튼 행 */
+  .btn-row{display:flex;gap:8px;}
+  .btn-row button{flex:1;}
+
+  .hint{font-size:.7rem;color:var(--muted);margin-top:4px;}
+  .hint a{color:var(--accent2);text-decoration:none;}
+</style>
+</head>
+<body>
+
+<!-- 헤더 -->
+<div class="app-header">
+  <h1>VNDB → HTML Generator <span>v1.1</span></h1>
+  <div class="server-status">
+    <div class="status-dot" id="proxyDot"></div>
+    <span class="status-text" id="proxyText">확인 중...</span>
+  </div>
+</div>
+
+<!-- 바디 -->
+<div class="app-body">
+
+  <!-- 왼쪽 패널 -->
+  <div class="panel panel-left">
+
+    <!-- API Key + 모델 -->
+    <div class="key-model-row">
+      <div class="key-col">
+        <div class="label">Gemini API Key</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="key-input-wrap" style="flex:1;">
+            <input type="password" id="apiKeyInput" placeholder="AIza..." oninput="saveKey()" />
+            <button class="eye-btn" onclick="toggleKeyVisibility()" title="API Key 표시/숨기기">
+              <svg id="eyeIcon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
+          </div>
+          <span class="save-badge" id="saveBadge">저장됨 ✓</span>
+        </div>
+        <div class="hint"><a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio</a>에서 무료 발급</div>
+      </div>
+      <div class="model-col">
+        <div class="label">모델</div>
+        <select id="modelSelect" onchange="saveModel()" style="width:auto;">
+          <option value="gemini-2.5-flash">gemini-2.5-flash (기본)</option>
+          <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
+          <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- VNDB 이미지 업로드 모드 -->
+    <div class="toggle-wrap">
+      <div class="toggle-header">
+        <span class="toggle-label">VNDB 이미지 업로드 모드</span>
+        <div class="toggle-switch" id="uploadToggle" onclick="toggleUpload()"></div>
+      </div>
+      <div class="segment">
+        <div class="seg-btn active" id="segSafe" onclick="setImageMode('safe')">일반 이미지만</div>
+        <div class="seg-btn" id="segAdult" onclick="setImageMode('adult')">성인 이미지 포함</div>
+      </div>
+    </div>
+
+    <!-- VNDB URL -->
+    <div>
+      <div class="label">VNDB URL</div>
+      <div class="url-row">
+        <input type="text" id="urlInput" placeholder="https://vndb.org/v22783" />
+        <button class="primary" id="runBtn" onclick="run()">생성</button>
+      </div>
+    </div>
+
+    <!-- 진행 로그 -->
+    <div class="label" style="margin-bottom:0;">진행 로그</div>
+    <div class="log-box" id="logBox"></div>
+
+  </div>
+
+  <!-- 오른쪽 패널 -->
+  <div class="panel">
+
+    <div class="label" style="margin-bottom:0;">생성된 코드</div>
+
+    <!-- 코드박스 -->
+    <div class="code-box" id="codeBox"></div>
+
+    <!-- 복사 완료 메시지 -->
+    <div class="copy-msg-box" id="copyMsgBox">
+      <span style="font-size:.9rem;">✓</span>
+      <span>클립보드에 복사되었습니다</span>
+    </div>
+
+    <!-- 버튼 -->
+    <div class="btn-row">
+      <button class="primary" onclick="copyCode()">클립보드 복사</button>
+      <button class="secondary" onclick="downloadTxt()">TXT 다운로드</button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const PROXY_VN        = "http://localhost:17373/vn";
+const PROXY_RELEASE   = "http://localhost:17373/release";
+const PROXY_TRANSLATE = "http://localhost:17373/translate";
+
+let generatedHtml = "";
+let uploadEnabled = false;
+let imageMode     = "safe";
+
+window.addEventListener("DOMContentLoaded", () => {
+  // localStorage 복원
+  const savedKey    = localStorage.getItem("gemini_api_key");
+  const savedModel  = localStorage.getItem("gemini_model");
+  const savedUpload = localStorage.getItem("upload_mode");
+  const savedImg    = localStorage.getItem("image_mode");
+
+  if (savedKey)   document.getElementById("apiKeyInput").value = savedKey;
+  if (savedModel) document.getElementById("modelSelect").value = savedModel;
+  if (savedUpload === "1") { uploadEnabled = true; document.getElementById("uploadToggle").classList.add("on"); }
+  if (savedImg === "adult") { imageMode = "adult"; document.getElementById("segSafe").classList.remove("active"); document.getElementById("segAdult").classList.add("active"); }
+
+  document.getElementById("urlInput").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
+  checkProxy();
+});
+
+async function checkProxy() {
+  const dot = document.getElementById("proxyDot");
+  const txt = document.getElementById("proxyText");
+  try {
+    const r = await fetch(PROXY_VN, { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({filters:["id","=","v1"],fields:"title"}) });
+    if (!r.ok) throw new Error();
+    dot.className = "status-dot ok"; txt.textContent = "서버 연결됨";
+  } catch {
+    dot.className = "status-dot fail"; txt.textContent = "서버 연결 안 됨 — 앱을 재시작해주세요";
+  }
+}
+
+function saveKey() {
+  localStorage.setItem("gemini_api_key", document.getElementById("apiKeyInput").value.trim());
+  const b = document.getElementById("saveBadge");
+  b.classList.add("show"); clearTimeout(b._t);
+  b._t = setTimeout(() => b.classList.remove("show"), 1500);
+}
+
+function saveModel() {
+  localStorage.setItem("gemini_model", document.getElementById("modelSelect").value);
+}
+
+function toggleUpload() {
+  uploadEnabled = !uploadEnabled;
+  document.getElementById("uploadToggle").classList.toggle("on", uploadEnabled);
+  localStorage.setItem("upload_mode", uploadEnabled ? "1" : "0");
+}
+
+function setImageMode(mode) {
+  imageMode = mode;
+  document.getElementById("segSafe").classList.toggle("active", mode === "safe");
+  document.getElementById("segAdult").classList.toggle("active", mode === "adult");
+  localStorage.setItem("image_mode", mode);
+}
+
+function log(msg, state = "") {
+  const box = document.getElementById("logBox");
+  const d = document.createElement("div");
+  d.className = "log-step " + state;
+  d.textContent = msg;
+  box.appendChild(d);
+  box.scrollTop = box.scrollHeight;
+}
+
+function clearLog() {
+  document.getElementById("logBox").innerHTML = "";
+  document.getElementById("codeBox").textContent = "";
+  document.getElementById("copyMsgBox").classList.remove("show");
+}
+
+function extractId(url) {
+  const m = url.trim().match(/vndb\.org\/(v\d+)/);
+  return m ? m[1] : null;
+}
+
+function isEnglishAlias(str) {
+  return /^[A-Za-z0-9\s\-_'!?.:,&()]+$/.test(str.trim());
+}
+
+function descToHtml(text) {
+  if (!text) return "<p>(설명 없음)</p>";
+  const clean = text.replace(/\[spoiler\][\s\S]*?\[\/spoiler\]/gi,"").replace(/\[[\w/]+\]/g,"").trim();
+  return clean.split(/\n+/).map(p=>p.trim()).filter(p=>p.length>0).map(p=>`<p>${p}</p>`).join("\n<br>\n");
+}
+
+function formatPlayTime(length, lengthMinutes) {
+  const labels = {1:"Very short (< 2 hours)",2:"Short (2 - 10 hours)",3:"Medium (10 - 30 hours)",4:"Long (30 - 50 hours)",5:"Very long (> 50 hours)"};
+  if (!length && !lengthMinutes) return "정보 없음";
+  let result = labels[length] || "";
+  if (lengthMinutes) {
+    const h = Math.floor(lengthMinutes/60), m = lengthMinutes%60;
+    const t = h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
+    result = result ? `${result} / ${t}` : t;
+  }
+  return result || "정보 없음";
+}
+
+function buildImagePool(vnData) {
+  const cover  = vnData.image?.url ? { url: vnData.image.url } : null;
+  const shots  = (vnData.screenshots || []).map(s => ({ url: s.url, sexual: Math.round(s.sexual || 0) }));
+  const safe   = shots.filter(s => s.sexual === 0);
+  const sug    = shots.filter(s => s.sexual === 1);
+  const exp    = shots.filter(s => s.sexual === 2);
+
+  if (imageMode === "safe") {
+    const pool = [];
+    if (cover) pool.push(cover.url);
+    safe.forEach(s => pool.push(s.url));
+    return pool.slice(0, 5);
+  } else {
+    const fixed = []; const usedUrls = new Set();
+    if (cover) { fixed.push(cover.url); usedUrls.add(cover.url); }
+    const fs = sug[0], fe = exp[0];
+    if (fs) { fixed.push(fs.url); usedUrls.add(fs.url); }
+    else if (fe) { fixed.push(fe.url); usedUrls.add(fe.url); }
+    if (fe && !usedUrls.has(fe.url)) { fixed.push(fe.url); usedUrls.add(fe.url); }
+    else if (fs && !usedUrls.has(fs.url)) { fixed.push(fs.url); usedUrls.add(fs.url); }
+    const pool = [];
+    [...safe,...sug,...exp].forEach(s => { if (!usedUrls.has(s.url)) pool.push(s.url); });
+    if (!cover && pool.length > 0) fixed.unshift(pool.shift());
+    return [...fixed, ...pool.slice(0, Math.max(0, 6-fixed.length))];
+  }
+}
+
+function buildHtml(url, originalTitle, developer, publisher, alias, rating, votecount, length, lengthMinutes, descHtml, imageUrls) {
+  const ratingStr = rating ? `${(rating/10).toFixed(2)} / 10.00` : "정보 없음";
+  const voteStr   = votecount ? `${votecount.toLocaleString()}표` : "정보 없음";
+  const playStr   = formatPlayTime(length, lengthMinutes);
+  const pubFmt    = publisher.split("\n").map(s=>s.trim()).filter(Boolean).join("<br>");
+  const imgSection = uploadEnabled && imageUrls.length > 0
+    ? imageUrls.map(u=>`<img src="${u}">`).join("\n</p>\n<br>\n<p>\n")
+    : "[이미지]";
+  const footer = `<hr>\n\n＊한패출처 : \n<br>\n<br>\n＊링크 : `;
+
+  return `${imgSection}
+
+<table>
+<tr><td><b>원제</b></td><td>${originalTitle}</td></tr>
+<tr><td><b>개발사</b></td><td>${developer}</td></tr>
+<tr><td><b>퍼블리셔</b></td><td>${pubFmt}</td></tr>
+<tr><td><b>별칭</b></td><td>${alias}</td></tr>
+<tr><td><b>VNDB</b></td><td><a href="${url}">${url}</a></td></tr>
+<tr><td><b>플레이 타임</b></td><td>${playStr}</td></tr>
+<tr><td><b>평점</b></td><td>${ratingStr} (${voteStr})</td></tr>
+</table>
+<br>
+[내용]
+<br>
+<br>
+<details>
+<summary><b>게임 개요(VNDB)</b></summary>
+
+${descHtml}
+
+</details>
+
+${footer}`;
+}
+
+async function fetchVndb(vnId) {
+  const base = "title, alttitle, description, developers.name, aliases, rating, votecount, length, length_minutes";
+  const imgs = uploadEnabled ? ", image.url, image.sexual, screenshots.url, screenshots.sexual" : "";
+  const r = await fetch(PROXY_VN, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ filters:["id","=",vnId], fields: base+imgs })
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+const LANG_FLAG = {
+  "ja":'<img src="https://flagcdn.com/16x12/jp.png" alt="JP" align="absmiddle" hspace="4">',
+  "en":'<img src="https://flagcdn.com/16x12/gb.png" alt="GB" align="absmiddle" hspace="4">',
+  "zh-Hans":'<img src="https://flagcdn.com/16x12/cn.png" alt="CN" align="absmiddle" hspace="4">',
+  "zh-Hant":'<img src="https://flagcdn.com/16x12/tw.png" alt="TW" align="absmiddle" hspace="4">',
+  "ko":'<img src="https://flagcdn.com/16x12/kr.png" alt="KR" align="absmiddle" hspace="4">',
+  "ru":'<img src="https://flagcdn.com/16x12/ru.png" alt="RU" align="absmiddle" hspace="4">',
+  "fr":'<img src="https://flagcdn.com/16x12/fr.png" alt="FR" align="absmiddle" hspace="4">',
+  "de":'<img src="https://flagcdn.com/16x12/de.png" alt="DE" align="absmiddle" hspace="4">',
+  "es":'<img src="https://flagcdn.com/16x12/es.png" alt="ES" align="absmiddle" hspace="4">',
+  "it":'<img src="https://flagcdn.com/16x12/it.png" alt="IT" align="absmiddle" hspace="4">',
+  "pt-br":'<img src="https://flagcdn.com/16x12/br.png" alt="BR" align="absmiddle" hspace="4">',
+  "pt-pt":'<img src="https://flagcdn.com/16x12/pt.png" alt="PT" align="absmiddle" hspace="4">',
+  "pl":'<img src="https://flagcdn.com/16x12/pl.png" alt="PL" align="absmiddle" hspace="4">',
+  "cs":'<img src="https://flagcdn.com/16x12/cz.png" alt="CZ" align="absmiddle" hspace="4">',
+  "hu":'<img src="https://flagcdn.com/16x12/hu.png" alt="HU" align="absmiddle" hspace="4">',
+  "ro":'<img src="https://flagcdn.com/16x12/ro.png" alt="RO" align="absmiddle" hspace="4">',
+  "uk":'<img src="https://flagcdn.com/16x12/ua.png" alt="UA" align="absmiddle" hspace="4">',
+  "tr":'<img src="https://flagcdn.com/16x12/tr.png" alt="TR" align="absmiddle" hspace="4">',
+  "ar":'<img src="https://flagcdn.com/16x12/sa.png" alt="SA" align="absmiddle" hspace="4">',
+  "th":'<img src="https://flagcdn.com/16x12/th.png" alt="TH" align="absmiddle" hspace="4">',
+  "vi":'<img src="https://flagcdn.com/16x12/vn.png" alt="VN" align="absmiddle" hspace="4">',
+  "id":'<img src="https://flagcdn.com/16x12/id.png" alt="ID" align="absmiddle" hspace="4">',
+  "nl":'<img src="https://flagcdn.com/16x12/nl.png" alt="NL" align="absmiddle" hspace="4">',
+  "sv":'<img src="https://flagcdn.com/16x12/se.png" alt="SE" align="absmiddle" hspace="4">',
+  "no":'<img src="https://flagcdn.com/16x12/no.png" alt="NO" align="absmiddle" hspace="4">',
+  "fi":'<img src="https://flagcdn.com/16x12/fi.png" alt="FI" align="absmiddle" hspace="4">',
+  "da":'<img src="https://flagcdn.com/16x12/dk.png" alt="DK" align="absmiddle" hspace="4">',
+  "sk":'<img src="https://flagcdn.com/16x12/sk.png" alt="SK" align="absmiddle" hspace="4">',
+  "bg":'<img src="https://flagcdn.com/16x12/bg.png" alt="BG" align="absmiddle" hspace="4">',
+  "hr":'<img src="https://flagcdn.com/16x12/hr.png" alt="HR" align="absmiddle" hspace="4">',
+  "ca":'<img src="https://flagcdn.com/16x12/es-ct.png" alt="CA" align="absmiddle" hspace="4">',
+  "eo":"🏳️"
+};
+
+async function fetchPublishers(vnId) {
+  const r = await fetch(PROXY_RELEASE, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ filters:["vn","=",["id","=",vnId]], fields:"producers.name, producers.publisher, languages.lang", results:50 })
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const data = await r.json();
+  const langMap = new Map();
+  for (const rel of data.results||[]) {
+    const pubs = (rel.producers||[]).filter(p=>p.publisher).map(p=>p.name);
+    if (!pubs.length) continue;
+    for (const lang of (rel.languages||[]).map(l=>l.lang)) {
+      if (!langMap.has(lang)) langMap.set(lang, new Set());
+      pubs.forEach(n=>langMap.get(lang).add(n));
+    }
+  }
+  if (!langMap.size) return "미상";
+  const order = ["ja","en","ko","zh-Hans","zh-Hant"];
+  const sorted = [...order.filter(l=>langMap.has(l)), ...[...langMap.keys()].filter(l=>!order.includes(l)).sort()];
+  return sorted.map(lang=>`${LANG_FLAG[lang]||"🏳️"} ${[...langMap.get(lang)].join(" & ")}`).join("\n");
+}
+
+async function translateWithGemini(text, apiKey, mode="desc") {
+  const model = document.getElementById("modelSelect").value;
+  const r = await fetch(PROXY_TRANSLATE, {
+    method:"POST",
+    headers:{"Content-Type":"application/json","x-goog-api-key":apiKey},
+    body: JSON.stringify({ text, mode, model })
+  });
+  const d = await r.json();
+  if (d.error === "CONTENT_BLOCKED") throw new Error("CONTENT_BLOCKED");
+  if (!r.ok) throw new Error(d?.error||`HTTP ${r.status}`);
+  if (!d.translated) throw new Error("번역 결과 없음");
+  return d.translated;
+}
+
+function toggleKeyVisibility() {
+  const input = document.getElementById("apiKeyInput");
+  const icon  = document.getElementById("eyeIcon");
+  const isHidden = input.type === "password";
+  input.type = isHidden ? "text" : "password";
+  icon.innerHTML = isHidden
+    ? `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line>`
+    : `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>`;
+}
+
+function showCopyMsg() {
+  document.getElementById("copyMsgBox").classList.add("show");
+}
+
+async function run() {
+  const url    = document.getElementById("urlInput").value.trim();
+  const apiKey = document.getElementById("apiKeyInput").value.trim();
+  clearLog();
+  document.getElementById("runBtn").disabled = true;
+
+  if (!url) { log("URL을 입력해주세요.", "fail"); document.getElementById("runBtn").disabled=false; return; }
+  const vnId = extractId(url);
+  if (!vnId) { log("vndb.org URL이 아니거나 형식이 올바르지 않습니다.", "fail"); document.getElementById("runBtn").disabled=false; return; }
+  log(`ID 추출: ${vnId}`, "ok");
+
+  // 1. VN 데이터
+  log("VNDB VN 데이터 조회 중...", "run");
+  let vnData;
+  try {
+    const res = await fetchVndb(vnId);
+    vnData = res.results?.[0];
+    log("VN 데이터 수신", "ok");
+  } catch(e) { log(`VNDB 호출 실패: ${e.message}`, "fail"); document.getElementById("runBtn").disabled=false; return; }
+  if (!vnData) { log("결과 없음 — ID를 확인해주세요.", "fail"); document.getElementById("runBtn").disabled=false; return; }
+
+  const developer     = vnData.developers?.map(d=>d.name).join(", ")||"미상";
+  const rawDesc       = vnData.description||"";
+  const rating        = vnData.rating||null;
+  const votecount     = vnData.votecount||null;
+  const length        = vnData.length||null;
+  const lengthMinutes = vnData.length_minutes||null;
+  const originalTitle = vnData.alttitle||vnData.title||"미상";
+  log(`원제: ${originalTitle}`, "ok");
+  log(`개발사: ${developer}`, "ok");
+
+  // 2. 이미지 (업로드 모드)
+  let imageUrls = [];
+  if (uploadEnabled) {
+    imageUrls = buildImagePool(vnData);
+    log(`이미지 수집: ${imageUrls.length}장 (${imageMode==="safe"?"일반":"성인 포함"})`, "ok");
+  }
+
+  // 3. 퍼블리셔
+  log("퍼블리셔 조회 중...", "run");
+  let publisher = "미상";
+  try { publisher = await fetchPublishers(vnId); log("퍼블리셔 수신", "ok"); }
+  catch(e) { log(`퍼블리셔 조회 실패: ${e.message}`, "fail"); }
+
+  // 4. 별칭
+  const engAliases = (vnData.aliases||[]).filter(isEnglishAlias);
+  let aliasResult = "없음";
+  if (engAliases.length > 0) {
+    if (!apiKey) { aliasResult = engAliases.join(", "); log("API Key 없음 → 별칭 변환 생략", "fail"); }
+    else {
+      log("별칭 한국어 발음 변환 중...", "run");
+      try { aliasResult = await translateWithGemini(engAliases.join(", "), apiKey, "alias"); log(`별칭: ${aliasResult}`, "ok"); }
+      catch(e) {
+        aliasResult = engAliases.join(", ");
+        log(e.message==="CONTENT_BLOCKED" ? "별칭 변환 — Gemini가 거부했습니다. 원문 사용" : `별칭 변환 실패: ${e.message}`, "fail");
+      }
+    }
+  } else { log("영문 별칭 없음", "ok"); }
+
+  // 5. Description 번역
+  let descHtml;
+  if (!rawDesc) { descHtml = "<p>(설명 없음)</p>"; }
+  else if (!apiKey) { log("API Key 없음 → 원문 삽입", "fail"); descHtml = descToHtml(rawDesc); }
+  else {
+    const model = document.getElementById("modelSelect").value;
+    log(`Description 번역 중... (${model})`, "run");
+    try { descHtml = descToHtml(await translateWithGemini(rawDesc, apiKey, "desc")); log("번역 완료", "ok"); }
+    catch(e) {
+      log(e.message==="CONTENT_BLOCKED" ? "번역 거부 — Gemini 콘텐츠 필터로 인해 거부되었습니다. 원문 삽입" : `번역 실패: ${e.message} → 원문 삽입`, "fail");
+      descHtml = descToHtml(rawDesc);
+    }
+  }
+
+  // 6. HTML 생성 + 자동 복사
+  generatedHtml = buildHtml(url, originalTitle, developer, publisher, aliasResult, rating, votecount, length, lengthMinutes, descHtml, imageUrls);
+  document.getElementById("codeBox").textContent = generatedHtml;
+  log("생성 완료 ✓", "ok");
+
+  navigator.clipboard.writeText(generatedHtml).then(() => { showCopyMsg(); }).catch(()=>{});
+
+  document.getElementById("runBtn").disabled = false;
+}
+
+function copyCode() {
+  navigator.clipboard.writeText(generatedHtml).then(() => {
+    showCopyMsg();
+    const btn = event.target, orig = btn.textContent;
+    btn.textContent = "복사됨 ✓";
+    setTimeout(() => btn.textContent = orig, 1500);
+  });
+}
+
+function downloadTxt() {
+  const vnId = extractId(document.getElementById("urlInput").value)||"output";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([generatedHtml],{type:"text/plain;charset=utf-8"}));
+  a.download = `vndb_${vnId}.txt`;
+  a.click();
+}
+</script>
+</body>
+</html>
