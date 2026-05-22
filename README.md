@@ -43,14 +43,19 @@ npm run build
 
 ## 릴리즈
 
-포터블 EXE는 [Releases](../../releases) 탭에서 다운로드할 수 있습니다.
+포터블 EXE는 [릴리즈](../../releases) 탭에서 다운로드할 수 있습니다.
 
 ## Docker (구버전 방식)
 
 포터블화 이전의 서버 전용 실행 방식입니다.
 
 ```bash
+
 docker-compose up -d
 ```
 
 브라우저에서 `http://localhost:8080` 접속
+
+## 동작화면
+
+<img width="1331" height="875" alt="Image" src="https://github.com/user-attachments/assets/7795b793-2bae-4333-ac3c-b372edb4192d" />
