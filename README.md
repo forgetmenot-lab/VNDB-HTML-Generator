@@ -1,61 +1,76 @@
 # VNDB HTML Generator
 
-해당 프로그램은 vndb.org 주소를 입력하면 vndb api를 호출하여 
-정해진 양식에 따라 자동으로 html으로파싱해줍니다. 
+VNDB URL을 입력하면 kone.gg 게시글용 HTML을 자동 생성하는 Electron 데스크탑 앱.
 
-Geminy pai key를 추가하면 개요 및 별칭 번역을 시도하고,
-실패하면 원본인 영문으로 삽입됩니다.
+---
 
-단 릴리즈 주소를 입력하면 작동하지 않습니다.
-
-## 내부작동 로직
-데이터 추출 및 API 연동: 입력된 URL에서 고유 식별자(VN ID)를 파싱한 후, 로컬 프록시 서버를 통해 VNDB API를 호출하여 원제, 제작사, 퍼블리셔, 평점 등의 메타데이터 원본을 수집합니다.
-
-제미나이(Gemini) 기반 데이터 가공: 수집된 영문 시놉시스와 별칭(Alias) 데이터를 Gemini API로 전송하여, 자연스러운 한국어 번역 및 독음 텍스트로 변환하는 자연어 처리 과정을 거칩니다.
-
-최종 HTML 구조화: 취합된 원본 데이터와 AI 번역 결과물을 미리 정의된 커뮤니티 게시 양식(HTML 테이블 및 details 태그)에 맞춰 렌더링하고, 사용자가 즉시 복사할 수 있는 최종 코드로 출력합니다.
-
-입력된 제미나이키는 로컬 환경에서만 저장합니다. 외부 유출 없습니다.
-
-## 구성
-
-| 파일 | 설명 |
-|---|---|
-| `main.js` | Electron 메인 프로세스 |
-| `server.js` | Express 로컬 프록시 서버 (VNDB API 중계) |
-| `vndb_tool.html` | UI |
-| `package.json` | 프로젝트 설정 및 빌드 스크립트 |
-
-## 실행 방법 (소스에서)
+## 설치 및 실행
 
 ```bash
+cd src
 npm install
-npm start
+npm start          # 개발 실행
+npm run build      # 포터블 EXE 빌드 → dist/VNDB-HTML-Generator.exe
 ```
 
-## 포터블 EXE 빌드
+---
 
-```bash
-npm run build
+## 사용법
+
+### 기본
+1. Gemini API Key 입력 ([Google AI Studio](https://aistudio.google.com/apikey)에서 무료 발급)
+2. VNDB URL 입력 후 생성 버튼
+3. 자동으로 클립보드 복사 → kone.gg 에디터에 붙여넣기
+
+### 입력 형식 (모두 동일하게 처리, 대소문자 무관)
+```
+https://vndb.org/v7724   ← VN URL
+https://vndb.org/r63343  ← 릴리즈 URL
+v7724 / vn7724 / vndb7724
+r63343
 ```
 
-빌드 결과물은 `dist/` 폴더에 생성됩니다.
+**VN 주소(v)와 릴리즈 주소(r)는 단독 입력 시 서로 다른 출력 폼을 생성합니다.**
+- VN 주소: 원제/개발사/퍼블리셔/별칭/플레이타임/연령등급/평점/태그
+- 릴리즈 주소: 타이틀/원제/개발사/퍼블리셔/발매일/연령등급/평점/태그 (별칭 제외, 발매일 추가, 퍼블리셔는 해당 릴리즈 기준 단순 표기)
 
-## 릴리즈
+### 다중 입력 (쉼표 구분, v/r 혼용 가능)
+```
+v1, v2, r456
+https://vndb.org/v1, vn2
+```
+2개 이상 입력 시 자동으로 다중 모드 처리. 다중 모드에서는 r 주소가 섞여도 VN 집계 포맷 그대로 사용되며, VNDB 링크만 입력한 주소(r/v) 그대로 표기됩니다.
 
-포터블 EXE는 [릴리즈](../../releases) 탭에서 다운로드할 수 있습니다.
+### 이미지 업로드 모드
+1. 토글 ON → 폴더 선택
+2. 생성 후 "폴더 열기" 버튼 → 탐색기에서 전체 선택 → kone.gg에 드래그
 
-## Docker (구버전 방식)
+---
 
-포터블화 이전의 서버 전용 실행 방식입니다.
+## 파일 구조
 
-```bash
+아래 소스 파일은 `src/`에 있습니다.
 
-docker-compose up -d
+```
+main.js             # Electron + Express 서버 (포트 17373)
+vndb_tool.html      # UI + 전체 클라이언트 로직
+multi_mode.js       # 다중 URL 처리 참고용 (vndb_tool.html에 인라인)
+release_mode.js     # 릴리즈(r) 단독 입력 처리 참고용 (vndb_tool.html에 인라인)
 ```
 
-브라우저에서 `http://localhost:8080` 접속
+---
 
-## 동작화면
+## 요구사항
 
-<img width="1331" height="875" alt="Image" src="https://github.com/user-attachments/assets/7795b793-2bae-4333-ac3c-b372edb4192d" />
+- Node.js 18+
+- Gemini API Key (번역 기능 사용 시)
+
+
+## v1.3 릴리즈 검토 (2026-09-10)
+
+- 제공된 src.zip의 실제 인라인 코드에서 v1.3 기능을 확인했습니다.
+- 소스 위치는 저장소의 src/입니다. 설치 및 빌드 명령은 src/에서 실행합니다.
+- 패키지 버전을 1.3.0으로 정리하고, multi_mode.js를 실제 인라인 코드와 동기화했습니다.
+- 과거 문서에 언급된 image_routes.js, vndb_tool_image.js, IMAGE_UPLOAD.md는 이번 제공 자료에 없습니다. 이미지 구현은 main.js와 vndb_tool.html에 있습니다.
+- Gemini API 번역, kone.gg 붙여넣기와 Windows GUI 실사용은 이번 검토에서 검증하지 않았습니다. 기존의 빌드 가능 및 외부 서비스 관련 서술은 과거 인수인계 기록입니다.
+- 릴리즈 연령등급의 일본어판 fallback은 기존 알려진 제한으로 유지합니다.

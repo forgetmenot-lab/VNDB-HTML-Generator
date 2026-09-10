@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VNDB → HTML Generator v1.1</title>
+<title>VNDB → HTML Generator v1.3</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap');
   :root {
@@ -110,7 +110,7 @@
 
 <!-- 헤더 -->
 <div class="app-header">
-  <h1>VNDB → HTML Generator <span>v1.1</span></h1>
+  <h1>VNDB → HTML Generator <span>v1.3</span></h1>
   <div class="server-status">
     <div class="status-dot" id="proxyDot"></div>
     <span class="status-text" id="proxyText">확인 중...</span>
@@ -144,9 +144,9 @@
       <div class="model-col">
         <div class="label">모델</div>
         <select id="modelSelect" onchange="saveModel()" style="width:auto;">
-          <option value="gemini-2.5-flash">gemini-2.5-flash (기본)</option>
-          <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
-          <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+          <option value="gemini-3.5-flash">gemini-3.5-flash (기본)</option>
+          <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+          <option value="gemini-3.1-pro">gemini-3.1-pro</option>
         </select>
       </div>
     </div>
@@ -161,13 +161,24 @@
         <div class="seg-btn active" id="segSafe" onclick="setImageMode('safe')">일반 이미지만</div>
         <div class="seg-btn" id="segAdult" onclick="setImageMode('adult')">성인 이미지 포함</div>
       </div>
+      <!-- 폴더 선택 (업로드 모드 ON일 때만 표시) -->
+      <div id="folderSection" style="display:none;margin-top:10px;">
+        <div class="label" style="margin-bottom:5px;">이미지 저장 폴더</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-family:'JetBrains Mono',monospace;font-size:.74rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" id="folderPathDisplay">폴더를 선택해주세요</div>
+          <button class="secondary" style="white-space:nowrap;padding:8px 14px;" onclick="selectFolder()">폴더 선택</button>
+        </div>
+        <div id="openFolderBtn" style="display:none;margin-top:8px;">
+          <button class="secondary" style="width:100%;" onclick="openSavedFolder()">📁 저장된 이미지 폴더 열기</button>
+        </div>
+      </div>
     </div>
 
     <!-- VNDB URL -->
     <div>
       <div class="label">VNDB URL</div>
       <div class="url-row">
-        <input type="text" id="urlInput" placeholder="https://vndb.org/v22783" />
+        <input type="text" id="urlInput" placeholder="URL 1개: https://vndb.org/v22783 또는 r63343 | 다중: v1, v2, r456" style="font-size:.9rem;" />
         <button class="primary" id="runBtn" onclick="run()">생성</button>
       </div>
     </div>
@@ -209,6 +220,7 @@ const PROXY_TRANSLATE = "http://localhost:17373/translate";
 let generatedHtml = "";
 let uploadEnabled = false;
 let imageMode     = "safe";
+let imgSavePath   = "";
 
 window.addEventListener("DOMContentLoaded", () => {
   // localStorage 복원
@@ -219,8 +231,9 @@ window.addEventListener("DOMContentLoaded", () => {
 
   if (savedKey)   document.getElementById("apiKeyInput").value = savedKey;
   if (savedModel) document.getElementById("modelSelect").value = savedModel;
-  if (savedUpload === "1") { uploadEnabled = true; document.getElementById("uploadToggle").classList.add("on"); }
+  if (savedUpload === "1") { uploadEnabled = true; document.getElementById("uploadToggle").classList.add("on"); document.getElementById("folderSection").style.display = "block"; }
   if (savedImg === "adult") { imageMode = "adult"; document.getElementById("segSafe").classList.remove("active"); document.getElementById("segAdult").classList.add("active"); }
+  // img_save_path는 배포 시 오염 방지를 위해 세션마다 초기화 (저장 안 함)
 
   document.getElementById("urlInput").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
   checkProxy();
@@ -252,7 +265,22 @@ function saveModel() {
 function toggleUpload() {
   uploadEnabled = !uploadEnabled;
   document.getElementById("uploadToggle").classList.toggle("on", uploadEnabled);
+  document.getElementById("folderSection").style.display = uploadEnabled ? "block" : "none";
   localStorage.setItem("upload_mode", uploadEnabled ? "1" : "0");
+}
+
+async function selectFolder() {
+  const r = await fetch("http://localhost:17373/selectfolder");
+  const d = await r.json();
+  if (d.canceled) return;
+  imgSavePath = d.folderPath;
+  document.getElementById("folderPathDisplay").textContent = imgSavePath;
+  document.getElementById("folderPathDisplay").style.color = "var(--text)";
+}
+
+function openSavedFolder() {
+  if (!imgSavePath) return;
+  fetch("http://localhost:17373/openfolder?path=" + encodeURIComponent(imgSavePath));
 }
 
 function setImageMode(mode) {
@@ -278,8 +306,30 @@ function clearLog() {
 }
 
 function extractId(url) {
-  const m = url.trim().match(/vndb\.org\/(v\d+)/);
-  return m ? m[1] : null;
+  const s = url.trim();
+  const m = s.match(/vndb\.org\/(v\d+)/i) || s.match(/^(?:vndb|vn)(\d+)$/i) || s.match(/^v(\d+)$/i);
+  if (!m) return null;
+  return "v" + m[1].replace(/^v/i, "");
+}
+
+async function resolveToVnId(input) {
+  const s = input.trim();
+  // v 형식이면 그대로 반환
+  const vnId = extractId(s);
+  if (vnId) return vnId;
+  // r 형식이면 Release API로 상위 VN ID 조회
+  const rId = extractReleaseId(s);
+  if (!rId) return null;
+  const r = await fetch(PROXY_RELEASE, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filters: ["id", "=", rId], fields: "vns.id", results: 1 })
+  });
+  if (!r.ok) throw new Error(`릴리즈 조회 실패: HTTP ${r.status}`);
+  const data = await r.json();
+  const vnRaw = data.results?.[0]?.vns?.[0]?.id;
+  if (!vnRaw) throw new Error(`${rId}에 연결된 VN을 찾을 수 없습니다`);
+  return vnRaw; // 이미 "v1234" 형태로 반환됨
 }
 
 function isEnglishAlias(str) {
@@ -289,7 +339,7 @@ function isEnglishAlias(str) {
 function descToHtml(text) {
   if (!text) return "<p>(설명 없음)</p>";
   const clean = text.replace(/\[spoiler\][\s\S]*?\[\/spoiler\]/gi,"").replace(/\[[\w/]+\]/g,"").trim();
-  return clean.split(/\n+/).map(p=>p.trim()).filter(p=>p.length>0).map(p=>`<p>${p}</p>`).join("\n<br>\n");
+  return clean.split("\n").map(l=>l.trim()).filter(Boolean).map(l=>`<p>${l}</p>`).join("\n<br>\n");
 }
 
 function formatPlayTime(length, lengthMinutes) {
@@ -331,43 +381,42 @@ function buildImagePool(vnData) {
   }
 }
 
-function buildHtml(url, originalTitle, developer, publisher, alias, rating, votecount, length, lengthMinutes, descHtml, imageUrls) {
+function buildHtml(url, originalTitle, developer, publisher, alias, rating, votecount, length, lengthMinutes, descHtml, ageRating, tagStr) {
   const ratingStr = rating ? `${(rating/10).toFixed(2)} / 10.00` : "정보 없음";
   const voteStr   = votecount ? `${votecount.toLocaleString()}표` : "정보 없음";
   const playStr   = formatPlayTime(length, lengthMinutes);
-  const pubFmt    = publisher.split("\n").map(s=>s.trim()).filter(Boolean).join("<br>");
-  const imgSection = uploadEnabled && imageUrls.length > 0
-    ? imageUrls.map(u=>`<img src="${u}">`).join("\n</p>\n<br>\n<p>\n")
-    : "[이미지]";
+  const pubFmt    = publisher.split("\n").map(s=>s.trim()).filter(Boolean).map(s=>`<p>${s}</p>`).join("\n");
+  const imgSection = "[이미지]";
   const footer = `<hr>\n\n＊한패출처 : \n<br>\n<br>\n＊링크 : `;
+  const th = 'style="width:100px;"';
+  const tagRow = `<tr><td ${th}><b>게임 태그</b></td><td><details open=""><summary>스포 주의 (클릭하여 펼치기)</summary><div data-type="detailsContent">${tagStr.split(",").map(t=>`<p>${t.trim()}</p>`).join("\n")}</div></details></td></tr>`;
 
   return `${imgSection}
 
 <table>
-<tr><td><b>원제</b></td><td>${originalTitle}</td></tr>
-<tr><td><b>개발사</b></td><td>${developer}</td></tr>
-<tr><td><b>퍼블리셔</b></td><td>${pubFmt}</td></tr>
-<tr><td><b>별칭</b></td><td>${alias}</td></tr>
-<tr><td><b>VNDB</b></td><td><a href="${url}">${url}</a></td></tr>
-<tr><td><b>플레이 타임</b></td><td>${playStr}</td></tr>
-<tr><td><b>평점</b></td><td>${ratingStr} (${voteStr})</td></tr>
+<tr><td ${th}><b>원제</b></td><td>${originalTitle}</td></tr>
+<tr><td ${th}><b>개발사</b></td><td>${developer}</td></tr>
+<tr><td ${th}><b>퍼블리셔</b></td><td>${pubFmt}</td></tr>
+<tr><td ${th}><b>별칭</b></td><td>${alias}</td></tr>
+<tr><td ${th}><b>VNDB</b></td><td><a href="${url}">${url}</a></td></tr>
+<tr><td ${th}><b>플레이 타임</b></td><td>${playStr}</td></tr>
+<tr><td ${th}><b>연령등급</b></td><td>${ageRating}</td></tr>
+<tr><td ${th}><b>평점</b></td><td>${ratingStr} (${voteStr})</td></tr>
+${tagRow}
 </table>
 <br>
 [내용]
 <br>
 <br>
-<details>
-<summary><b>게임 개요(VNDB)</b></summary>
-
+<details open=""><summary><b>게임 개요(VNDB)</b></summary><div data-type="detailsContent">
 ${descHtml}
-
-</details>
+</div></details>
 
 ${footer}`;
 }
 
 async function fetchVndb(vnId) {
-  const base = "title, alttitle, description, developers.name, aliases, rating, votecount, length, length_minutes";
+  const base = "title, alttitle, description, developers.name, aliases, rating, votecount, length, length_minutes, tags.name, tags.rating, tags.spoiler, tags.category";
   const imgs = uploadEnabled ? ", image.url, image.sexual, screenshots.url, screenshots.sexual" : "";
   const r = await fetch(PROXY_VN, {
     method:"POST", headers:{"Content-Type":"application/json"},
@@ -377,40 +426,43 @@ async function fetchVndb(vnId) {
   return r.json();
 }
 
-const LANG_FLAG = {
-  "ja":'<img src="https://flagcdn.com/16x12/jp.png" alt="JP" align="absmiddle" hspace="4">',
-  "en":'<img src="https://flagcdn.com/16x12/gb.png" alt="GB" align="absmiddle" hspace="4">',
-  "zh-Hans":'<img src="https://flagcdn.com/16x12/cn.png" alt="CN" align="absmiddle" hspace="4">',
-  "zh-Hant":'<img src="https://flagcdn.com/16x12/tw.png" alt="TW" align="absmiddle" hspace="4">',
-  "ko":'<img src="https://flagcdn.com/16x12/kr.png" alt="KR" align="absmiddle" hspace="4">',
-  "ru":'<img src="https://flagcdn.com/16x12/ru.png" alt="RU" align="absmiddle" hspace="4">',
-  "fr":'<img src="https://flagcdn.com/16x12/fr.png" alt="FR" align="absmiddle" hspace="4">',
-  "de":'<img src="https://flagcdn.com/16x12/de.png" alt="DE" align="absmiddle" hspace="4">',
-  "es":'<img src="https://flagcdn.com/16x12/es.png" alt="ES" align="absmiddle" hspace="4">',
-  "it":'<img src="https://flagcdn.com/16x12/it.png" alt="IT" align="absmiddle" hspace="4">',
-  "pt-br":'<img src="https://flagcdn.com/16x12/br.png" alt="BR" align="absmiddle" hspace="4">',
-  "pt-pt":'<img src="https://flagcdn.com/16x12/pt.png" alt="PT" align="absmiddle" hspace="4">',
-  "pl":'<img src="https://flagcdn.com/16x12/pl.png" alt="PL" align="absmiddle" hspace="4">',
-  "cs":'<img src="https://flagcdn.com/16x12/cz.png" alt="CZ" align="absmiddle" hspace="4">',
-  "hu":'<img src="https://flagcdn.com/16x12/hu.png" alt="HU" align="absmiddle" hspace="4">',
-  "ro":'<img src="https://flagcdn.com/16x12/ro.png" alt="RO" align="absmiddle" hspace="4">',
-  "uk":'<img src="https://flagcdn.com/16x12/ua.png" alt="UA" align="absmiddle" hspace="4">',
-  "tr":'<img src="https://flagcdn.com/16x12/tr.png" alt="TR" align="absmiddle" hspace="4">',
-  "ar":'<img src="https://flagcdn.com/16x12/sa.png" alt="SA" align="absmiddle" hspace="4">',
-  "th":'<img src="https://flagcdn.com/16x12/th.png" alt="TH" align="absmiddle" hspace="4">',
-  "vi":'<img src="https://flagcdn.com/16x12/vn.png" alt="VN" align="absmiddle" hspace="4">',
-  "id":'<img src="https://flagcdn.com/16x12/id.png" alt="ID" align="absmiddle" hspace="4">',
-  "nl":'<img src="https://flagcdn.com/16x12/nl.png" alt="NL" align="absmiddle" hspace="4">',
-  "sv":'<img src="https://flagcdn.com/16x12/se.png" alt="SE" align="absmiddle" hspace="4">',
-  "no":'<img src="https://flagcdn.com/16x12/no.png" alt="NO" align="absmiddle" hspace="4">',
-  "fi":'<img src="https://flagcdn.com/16x12/fi.png" alt="FI" align="absmiddle" hspace="4">',
-  "da":'<img src="https://flagcdn.com/16x12/dk.png" alt="DK" align="absmiddle" hspace="4">',
-  "sk":'<img src="https://flagcdn.com/16x12/sk.png" alt="SK" align="absmiddle" hspace="4">',
-  "bg":'<img src="https://flagcdn.com/16x12/bg.png" alt="BG" align="absmiddle" hspace="4">',
-  "hr":'<img src="https://flagcdn.com/16x12/hr.png" alt="HR" align="absmiddle" hspace="4">',
-  "ca":'<img src="https://flagcdn.com/16x12/es-ct.png" alt="CA" align="absmiddle" hspace="4">',
-  "eo":"🏳️"
+// 언어코드 → 대문자 태그 (kone.gg 이미지 정책으로 국기 이미지 사용 불가)
+const LANG_CODE = {
+  "ja":"JP","en":"EN","zh-Hans":"CN","zh-Hant":"TW","ko":"KR",
+  "ru":"RU","fr":"FR","de":"DE","es":"ES","it":"IT",
+  "pt-br":"BR","pt-pt":"PT","pl":"PL","cs":"CZ","hu":"HU",
+  "ro":"RO","uk":"UA","tr":"TR","ar":"AR","th":"TH",
+  "vi":"VN","id":"ID","nl":"NL","sv":"SE","no":"NO",
+  "fi":"FI","da":"DK","sk":"SK","bg":"BG","hr":"HR","ca":"CA","eo":"EO"
 };
+
+async function urlToBase64(url) {
+  const r = await fetch(`http://localhost:17373/imgproxy?url=${encodeURIComponent(url)}`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const d = await r.json();
+  if (d.error) throw new Error(d.error);
+  return d.dataUrl;
+}
+
+async function fetchAgeRating(vnId) {
+  const r = await fetch(PROXY_RELEASE, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ filters:["vn","=",["id","=",vnId]], fields:"languages.lang, minage", results:50 })
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const data = await r.json();
+  const jaReleases = (data.results||[]).filter(rel =>
+    (rel.languages||[]).some(l => l.lang === "ja")
+  );
+  if (!jaReleases.length) return "정보 없음";
+  function formatAge(m) {
+    if (m === null || m === undefined) return "전연령";
+    if (m === 0) return "전연령";
+    return `${m}+`;
+  }
+  const ageSet = [...new Set(jaReleases.map(r => formatAge(r.minage)).filter(Boolean))];
+  return ageSet.length ? [...new Set(ageSet)].join(", ") : "전연령";
+}
 
 async function fetchPublishers(vnId) {
   const r = await fetch(PROXY_RELEASE, {
@@ -431,7 +483,7 @@ async function fetchPublishers(vnId) {
   if (!langMap.size) return "미상";
   const order = ["ja","en","ko","zh-Hans","zh-Hant"];
   const sorted = [...order.filter(l=>langMap.has(l)), ...[...langMap.keys()].filter(l=>!order.includes(l)).sort()];
-  return sorted.map(lang=>`${LANG_FLAG[lang]||"🏳️"} ${[...langMap.get(lang)].join(" & ")}`).join("\n");
+  return sorted.map(lang=>`[${LANG_CODE[lang]||lang.toUpperCase()}] ${[...langMap.get(lang)].join(" & ")}`).join("\n");
 }
 
 async function translateWithGemini(text, apiKey, mode="desc") {
@@ -458,6 +510,15 @@ function toggleKeyVisibility() {
     : `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>`;
 }
 
+function copyAsRichText(html) {
+  return navigator.clipboard.write([
+    new ClipboardItem({
+      "text/html": new Blob([html], { type: "text/html" }),
+      "text/plain": new Blob([html], { type: "text/plain" })
+    })
+  ]);
+}
+
 function showCopyMsg() {
   document.getElementById("copyMsgBox").classList.add("show");
 }
@@ -469,6 +530,45 @@ async function run() {
   document.getElementById("runBtn").disabled = true;
 
   if (!url) { log("URL을 입력해주세요.", "fail"); document.getElementById("runBtn").disabled=false; return; }
+
+  // 다중 URL 감지 (쉼표로 구분)
+  const tokens = parseMultiUrls(url);
+  if (tokens.length >= 2) {
+    log(`다중 모드: ${tokens.length}개 입력 감지됨`, "ok");
+    const resolved = await resolveMultiTokens(tokens, log);
+    if (!resolved.length) { log("처리 가능한 ID가 없습니다.", "fail"); document.getElementById("runBtn").disabled=false; return; }
+    const html = await runMulti(resolved, apiKey);
+    if (html) {
+      generatedHtml = html;
+      document.getElementById("codeBox").textContent = generatedHtml;
+      copyAsRichText(generatedHtml).then(() => { showCopyMsg(); }).catch(() => {});
+    }
+    document.getElementById("runBtn").disabled = false;
+    return;
+  }
+
+  // 단일 입력: 릴리즈(r) 우선 분기 — VN 모드와 완전히 다른 전용 파이프라인
+  const rId = extractReleaseId(url);
+  if (rId) {
+    log(`릴리즈 ID 추출: ${rId}`, "ok");
+    let html;
+    try {
+      html = await runRelease(rId, apiKey, log);
+    } catch (e) {
+      log(`릴리즈 처리 실패: ${e.message}`, "fail");
+      document.getElementById("runBtn").disabled = false;
+      return;
+    }
+    if (html) {
+      generatedHtml = html;
+      document.getElementById("codeBox").textContent = generatedHtml;
+      copyAsRichText(generatedHtml).then(() => { showCopyMsg(); }).catch(() => {});
+    }
+    document.getElementById("runBtn").disabled = false;
+    return;
+  }
+
+  // 단일 입력: VN(v)
   const vnId = extractId(url);
   if (!vnId) { log("vndb.org URL이 아니거나 형식이 올바르지 않습니다.", "fail"); document.getElementById("runBtn").disabled=false; return; }
   log(`ID 추출: ${vnId}`, "ok");
@@ -494,17 +594,44 @@ async function run() {
   log(`개발사: ${developer}`, "ok");
 
   // 2. 이미지 (업로드 모드)
-  let imageUrls = [];
   if (uploadEnabled) {
-    imageUrls = buildImagePool(vnData);
-    log(`이미지 수집: ${imageUrls.length}장 (${imageMode==="safe"?"일반":"성인 포함"})`, "ok");
+    if (!imgSavePath) {
+      log("이미지 저장 폴더가 설정되지 않았습니다. 폴더를 선택해주세요.", "fail");
+      document.getElementById("runBtn").disabled = false;
+      return;
+    }
+    const rawUrls = buildImagePool(vnData);
+    log(`이미지 저장 중: ${rawUrls.length}장 (${imageMode==="safe"?"일반":"성인 포함"})...`, "run");
+    let savedCount = 0;
+    await Promise.all(rawUrls.map(async (imgUrl, i) => {
+      const ext = imgUrl.split(".").pop().split("?")[0] || "jpg";
+      const filename = `${vnId}_${String(i+1).padStart(2,"0")}.${ext}`;
+      try {
+        const r = await fetch("http://localhost:17373/saveimg", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: imgUrl, folderPath: imgSavePath, filename })
+        });
+        const d = await r.json();
+        if (d.ok) savedCount++;
+        else log(`이미지 저장 실패: ${filename}`, "fail");
+      } catch(e) { log(`이미지 저장 오류: ${e.message}`, "fail"); }
+    }));
+    log(`이미지 저장 완료: ${savedCount}장 → ${imgSavePath}`, "ok");
+    document.getElementById("openFolderBtn").style.display = "block";
   }
 
-  // 3. 퍼블리셔
-  log("퍼블리셔 조회 중...", "run");
+  // 3. 퍼블리셔 + 연령등급 병렬 조회
+  log("퍼블리셔 / 연령등급 조회 중...", "run");
   let publisher = "미상";
-  try { publisher = await fetchPublishers(vnId); log("퍼블리셔 수신", "ok"); }
-  catch(e) { log(`퍼블리셔 조회 실패: ${e.message}`, "fail"); }
+  let ageRating = "정보 없음";
+  try {
+    [publisher, ageRating] = await Promise.all([
+      fetchPublishers(vnId),
+      fetchAgeRating(vnId)
+    ]);
+    log(`퍼블리셔 수신 / 연령등급: ${ageRating}`, "ok");
+  } catch(e) { log(`퍼블리셔/연령등급 조회 실패: ${e.message}`, "fail"); }
 
   // 4. 별칭
   const engAliases = (vnData.aliases||[]).filter(isEnglishAlias);
@@ -535,18 +662,40 @@ async function run() {
     }
   }
 
-  // 6. HTML 생성 + 자동 복사
-  generatedHtml = buildHtml(url, originalTitle, developer, publisher, aliasResult, rating, votecount, length, lengthMinutes, descHtml, imageUrls);
+  // 6. 태그 처리
+  const rawTags = (vnData.tags||[]).sort((a,b)=>b.rating-a.rating).slice(0,5);
+  let tagStr = "This VN has no tags assigned to it (yet).";
+  if (rawTags.length > 0) {
+    const tagNames = rawTags.map(t => t.name).join(", ");
+    if (!apiKey) {
+      tagStr = tagNames;
+      log("API Key 없음 → 태그 원문 사용", "fail");
+    } else {
+      log("태그 번역 중...", "run");
+      try {
+        tagStr = await translateWithGemini(tagNames, apiKey, "alias");
+        log("태그 번역 완료", "ok");
+      } catch(e) {
+        tagStr = tagNames;
+        log(e.message==="CONTENT_BLOCKED" ? "태그 번역 거부 — 원문 사용" : `태그 번역 실패: ${e.message} → 원문 사용`, "fail");
+      }
+    }
+  } else {
+    log("태그 정보 없음", "ok");
+  }
+
+  // 7. HTML 생성 + 자동 복사
+  generatedHtml = buildHtml(`https://vndb.org/${vnId}`, originalTitle, developer, publisher, aliasResult, rating, votecount, length, lengthMinutes, descHtml, ageRating, tagStr);
   document.getElementById("codeBox").textContent = generatedHtml;
   log("생성 완료 ✓", "ok");
 
-  navigator.clipboard.writeText(generatedHtml).then(() => { showCopyMsg(); }).catch(()=>{});
+  copyAsRichText(generatedHtml).then(() => { showCopyMsg(); }).catch(()=>{});
 
   document.getElementById("runBtn").disabled = false;
 }
 
 function copyCode() {
-  navigator.clipboard.writeText(generatedHtml).then(() => {
+  copyAsRichText(generatedHtml).then(() => {
     showCopyMsg();
     const btn = event.target, orig = btn.textContent;
     btn.textContent = "복사됨 ✓";
@@ -555,12 +704,393 @@ function copyCode() {
 }
 
 function downloadTxt() {
-  const vnId = extractId(document.getElementById("urlInput").value)||"output";
+  const vnId = extractId(document.getElementById("urlInput").value) || extractReleaseId(document.getElementById("urlInput").value) || "output";
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([generatedHtml],{type:"text/plain;charset=utf-8"}));
   a.download = `vndb_${vnId}.txt`;
   a.click();
 }
+
+// ---- 다중 모드 (multi_mode.js 인라인) ----
+/**
+ * MULTI_MODE.JS
+ * =============
+ * VNDB URL 2개 이상 입력 시 다중 처리 모드.
+ * 기존 단일 처리 run()과 완전히 분리된 독립 로직.
+ *
+ * v1.3: 다중 입력에 r(릴리즈) 토큰이 섞여도 테이블 포맷은 기존 VN 집계 포맷을
+ * 그대로 유지한다. 단 VNDB 주소 행만 입력된 r 주소 그대로 표기한다
+ * (release_mode.js의 릴리즈 전용 필드/파이프라인은 다중모드에 적용하지 않음).
+ *
+ * 출력 형태:
+ *   [게임1 테이블]
+ *   <br><hr><br>
+ *   ...
+ *   [게임n 테이블]
+ *   ＊ 링크 :
+ *
+ * 테이블 항목: 제목(병합), 이미지(병합), 원제, 개발사, VNDB, 플레이타임, 평점, 게임태그, 한패출처, 특이사항
+ * 퍼블리셔/연령등급/별칭 제외 (다중 모드 전용 스펙)
+ */
+
+// ---- URL 파싱 ----
+
+/**
+ * 입력 문자열에서 토큰 배열 추출 (v/r 원문 그대로, 정규화는 resolveMultiTokens에서 처리)
+ */
+function parseMultiUrls(input) {
+  return input
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * 각 토큰을 { vnId, displayUrl } 형태로 정규화.
+ * r 토큰은 VN ID로 해석하되 표시 주소는 입력된 r 주소를 그대로 유지한다.
+ */
+async function resolveMultiTokens(tokens, log) {
+  const out = [];
+  for (const token of tokens) {
+    const rId = extractReleaseId(token);
+    if (rId) {
+      try {
+        const vnId = await resolveToVnId(token);
+        if (vnId) out.push({ vnId, displayUrl: `https://vndb.org/${rId}` });
+        else log(`인식할 수 없는 입력: ${token}`, "fail");
+      } catch (e) {
+        log(`${token} → ${e.message}`, "fail");
+      }
+      continue;
+    }
+    const vId = extractId(token);
+    if (vId) {
+      out.push({ vnId: vId, displayUrl: `https://vndb.org/${vId}` });
+    } else {
+      log(`인식할 수 없는 입력: ${token}`, "fail");
+    }
+  }
+  return out;
+}
+
+// ---- 단일 게임 데이터 조회 ----
+
+async function fetchVndbMulti(vnId) {
+  const r = await fetch(PROXY_VN, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      filters: ["id", "=", vnId],
+      fields: "title, alttitle, description, developers.name, rating, votecount, length, length_minutes, tags.name, tags.rating, tags.spoiler"
+    })
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const data = await r.json();
+  return data.results?.[0] || null;
+}
+
+// ---- 태그 번역 ----
+
+async function translateTagsMulti(tagNames, apiKey, vnId) {
+  if (!apiKey || !tagNames) return tagNames;
+  try {
+    return await translateWithGemini(tagNames, apiKey, "alias");
+  } catch (e) {
+    log(`${vnId} — 태그 번역 실패: ${e.message} → 원문 사용`, "fail");
+    return tagNames;
+  }
+}
+
+// ---- 단일 게임 테이블 HTML 생성 ----
+
+function buildMultiGameTable(vnId, vnData, tagStr, displayUrl) {
+  const originalTitle = vnData.alttitle || vnData.title || "미상";
+  const developer = vnData.developers?.map(d => d.name).join(", ") || "미상";
+  const vnUrl = displayUrl || `https://vndb.org/${vnId}`;
+  const playStr = formatPlayTime(vnData.length || null, vnData.length_minutes || null);
+  const rating = vnData.rating || null;
+  const votecount = vnData.votecount || null;
+  const ratingStr = rating ? `${(rating / 10).toFixed(2)} / 10.00` : "정보 없음";
+  const voteStr = votecount ? `${votecount.toLocaleString()}표` : "정보 없음";
+  const tw = 'style="width:100px;"';
+  const tagRow = tagStr
+    ? `<tr><td ${tw}><b>게임 태그</b></td><td><details open=""><summary>스포 주의 (클릭하여 펼치기)</summary><div data-type="detailsContent">${tagStr.split(",").map(t => `<p>${t.trim()}</p>`).join("\n")}</div></details></td></tr>`
+    : "";
+  return `<table>
+<tr><td colspan="2"><b>제목</b></td></tr>
+<tr><td colspan="2"><b>이미지</b></td></tr>
+<tr><td ${tw}><b>원제</b></td><td>${originalTitle}</td></tr>
+<tr><td ${tw}><b>개발사</b></td><td>${developer}</td></tr>
+<tr><td ${tw}><b>VNDB</b></td><td><a href="${vnUrl}">${vnUrl}</a></td></tr>
+<tr><td ${tw}><b>플레이 타임</b></td><td>${playStr}</td></tr>
+<tr><td ${tw}><b>평점</b></td><td>${ratingStr} (${voteStr})</td></tr>
+${tagRow}
+<tr><td ${tw}><b>한패출처</b></td><td></td></tr>
+<tr><td ${tw}><b>특이사항</b></td><td></td></tr>
+</table>`;
+}
+
+// ---- 다중 모드 메인 진입점 ----
+
+async function runMulti(resolvedTokens, apiKey) {
+  const tables = [];
+
+  for (let i = 0; i < resolvedTokens.length; i++) {
+    const { vnId, displayUrl } = resolvedTokens[i];
+    log(`[${i + 1}/${resolvedTokens.length}] ${vnId} 처리 중...`, "run");
+
+    // VN 데이터 조회
+    let vnData;
+    try {
+      vnData = await fetchVndbMulti(vnId);
+      if (!vnData) { log(`${vnId} — 결과 없음, 건너뜀`, "fail"); continue; }
+      log(`${vnId} — ${vnData.alttitle || vnData.title}`, "ok");
+    } catch (e) {
+      log(`${vnId} — 조회 실패: ${e.message}`, "fail");
+      continue;
+    }
+
+    // 태그 처리 (상위 5개, rating 내림차순)
+    const rawTags = (vnData.tags || []).sort((a, b) => b.rating - a.rating).slice(0, 5);
+    let tagStr = "";
+    if (rawTags.length > 0) {
+      const tagNames = rawTags.map(t => t.name).join(", ");
+      if (apiKey) {
+        log(`${vnId} — 태그 번역 중...`, "run");
+        tagStr = await translateTagsMulti(tagNames, apiKey, vnId);
+        log(`${vnId} — 태그 완료`, "ok");
+      } else {
+        tagStr = tagNames;
+      }
+    }
+
+    tables.push(buildMultiGameTable(vnId, vnData, tagStr, displayUrl));
+  }
+
+  if (!tables.length) {
+    log("처리된 게임이 없습니다.", "fail");
+    return null;
+  }
+
+  // 게임 사이: <hr>, 마지막 뒤: ＊ 링크 :
+  const html = tables.join("\n<hr>\n") + "\n\n＊ 링크 : ";
+  log(`다중 생성 완료 ✓ (${tables.length}개)`, "ok");
+  return html;
+}
+
+// ---- 릴리즈 모드 (release_mode.js 인라인) ----
+/**
+ * RELEASE_MODE.JS
+ * ================
+ * 검색창에 릴리즈(r) 주소가 단독으로 입력됐을 때의 전용 파이프라인.
+ * VN 주소(v) 입력과는 완전히 다른 출력 폼을 사용한다.
+ *
+ * 데이터 소스 우선순위:
+ *   1. /release 단일 호출 (title, alttitle, minage, released, producers, vns.* 전부 중첩 조회)
+ *   2. 릴리즈 자체에 없는 값(개발사 미표시, 연령등급 null)만 별도 호출로 보강
+ *      - 개발사 없음 → /vn 호출 (developers.name)
+ *      - 연령등급 null → 기존 fetchAgeRating(vnId) 재사용 (VN의 ja 릴리즈 집계)
+ *   3. 평점/게임태그는 release 쿼리에 vns.rating/vns.votecount/vns.tags.*로 중첩 조회하므로
+ *      별도 호출 불필요
+ *
+ * 관련제품(Relation) 항목은 VNDB Kana API가 노출하지 않는 필드라 제외됨.
+ */
+
+// ---- 릴리즈 ID 추출 ----
+
+function extractReleaseId(url) {
+  const s = url.trim();
+  const m = s.match(/vndb\.org\/(r\d+)/i) || s.match(/^(?:vndb|vn)r(\d+)$/i) || s.match(/^r(\d+)$/i);
+  if (!m) return null;
+  return "r" + m[1].replace(/^r/i, "");
+}
+
+// ---- 릴리즈 데이터 조회 (VN 중첩 필드 포함 단일 호출) ----
+
+async function fetchReleaseFull(rId) {
+  const r = await fetch(PROXY_RELEASE, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      filters: ["id", "=", rId],
+      fields: "title, alttitle, minage, released, languages.lang, " +
+               "producers.name, producers.developer, producers.publisher, " +
+               "vns.id, vns.title, vns.alttitle, vns.rating, vns.votecount, " +
+               "vns.tags.name, vns.tags.rating, vns.tags.spoiler, vns.tags.category"
+    })
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const data = await r.json();
+  return data.results?.[0] || null;
+}
+
+// ---- 개발사 보강 (릴리즈에 없을 때만) ----
+
+async function fetchVnDeveloper(vnId) {
+  const r = await fetch(PROXY_VN, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filters: ["id", "=", vnId], fields: "developers.name" })
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const data = await r.json();
+  return data.results?.[0]?.developers?.map(d => d.name).join(", ") || "";
+}
+
+// ---- 게임 개요 조회 (release에 없는 필드라 VN 모드처럼 별도 호출) ----
+
+async function fetchVnDescription(vnId) {
+  const r = await fetch(PROXY_VN, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filters: ["id", "=", vnId], fields: "description" })
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const data = await r.json();
+  return data.results?.[0]?.description || "";
+}
+
+// ---- 퍼블리셔 포맷 (릴리즈 기준 단순화, VN 모드처럼 다중 언어 집계 안 함) ----
+
+function formatReleasePublisher(release) {
+  const pubs = (release.producers || []).filter(p => p.publisher).map(p => p.name);
+  if (!pubs.length) return "미상";
+  const langs = (release.languages || []).map(l => l.lang);
+  const tag = langs.length ? (LANG_CODE[langs[0]] || langs[0].toUpperCase()) : "";
+  return tag ? `[${tag}] ${pubs.join(" & ")}` : pubs.join(" & ");
+}
+
+// ---- 연령등급 포맷. null이면 fallback 필요 신호로 null 반환 ----
+
+function formatReleaseAge(minage) {
+  if (minage === null || minage === undefined) return null;
+  if (minage === 0) return "전연령";
+  return `${minage}+`;
+}
+
+// ---- HTML 생성 ----
+
+function buildReleaseHtml(rId, release, developer, ageRatingStr, tagStr, descHtml) {
+  const vn = release.vns?.[0] || {};
+  const releaseTitle = release.title || vn.title || "미상";
+  const releaseAltTitle = release.alttitle || vn.alttitle || releaseTitle;
+  const publisher = formatReleasePublisher(release);
+  const rating = vn.rating || null;
+  const votecount = vn.votecount || null;
+  const ratingStr = rating ? `${(rating / 10).toFixed(2)} / 10.00` : "정보 없음";
+  const voteStr = votecount ? `${votecount.toLocaleString()}표` : "정보 없음";
+  const releaseUrl = `https://vndb.org/${rId}`;
+  const th = 'style="width:100px;"';
+  const tagRow = tagStr
+    ? `<tr><td ${th}><b>게임 태그</b></td><td><details open=""><summary>스포 주의 (클릭하여 펼치기)</summary><div data-type="detailsContent">${tagStr.split(",").map(t => `<p>${t.trim()}</p>`).join("\n")}</div></details></td></tr>`
+    : "";
+
+  return `[이미지]
+
+<table>
+<tr><td ${th}><b>타이틀</b></td><td>${releaseTitle}</td></tr>
+<tr><td ${th}><b>원제</b></td><td>${releaseAltTitle}</td></tr>
+<tr><td ${th}><b>개발사</b></td><td>${developer || "미상"}</td></tr>
+<tr><td ${th}><b>퍼블리셔</b></td><td>${publisher}</td></tr>
+<tr><td ${th}><b>VNDB</b></td><td><a href="${releaseUrl}">${releaseUrl}</a></td></tr>
+<tr><td ${th}><b>발매일</b></td><td>${release.released || "정보 없음"}</td></tr>
+<tr><td ${th}><b>연령등급</b></td><td>${ageRatingStr}</td></tr>
+<tr><td ${th}><b>평점</b></td><td>${ratingStr} (${voteStr})</td></tr>
+${tagRow}
+</table>
+<br>
+[내용]
+<br>
+<br>
+<details open=""><summary><b>게임 개요(VNDB)</b></summary><div data-type="detailsContent">
+${descHtml}
+</div></details>
+
+<hr>
+
+＊한패출처 : 
+<br>
+<br>
+＊링크 : `;
+}
+
+// ---- 릴리즈 모드 메인 진입점 ----
+
+async function runRelease(rId, apiKey, log) {
+  log("릴리즈 데이터 조회 중...", "run");
+  let release;
+  try {
+    release = await fetchReleaseFull(rId);
+  } catch (e) {
+    log(`릴리즈 조회 실패: ${e.message}`, "fail");
+    return null;
+  }
+  if (!release) { log("결과 없음 — ID를 확인해주세요.", "fail"); return null; }
+  log(`타이틀: ${release.title}`, "ok");
+
+  const vnId = release.vns?.[0]?.id;
+  if (!vnId) { log("연결된 VN을 찾을 수 없습니다.", "fail"); return null; }
+
+  // 개발사: 릴리즈 producers에 developer 표시 없으면 VN 별도 조회
+  let developer = (release.producers || []).filter(p => p.developer).map(p => p.name).join(", ");
+  if (!developer) {
+    log("릴리즈에 개발사 정보 없음 → VN 정보 조회 중...", "run");
+    try { developer = await fetchVnDeveloper(vnId); }
+    catch (e) { log(`개발사 조회 실패: ${e.message}`, "fail"); }
+  }
+
+  // 연령등급: 릴리즈 자체 minage 없으면 기존 fetchAgeRating(VN ja 릴리즈 집계) 재사용
+  let ageRatingStr = formatReleaseAge(release.minage);
+  if (ageRatingStr === null) {
+    log("릴리즈에 연령등급 정보 없음 → VN 릴리즈 목록 조회 중...", "run");
+    try { ageRatingStr = await fetchAgeRating(vnId); }
+    catch (e) { ageRatingStr = "정보 없음"; log(`연령등급 조회 실패: ${e.message}`, "fail"); }
+  }
+
+  // 태그 번역 (VN 소속 필드, 이미 release 쿼리에서 중첩 조회됨)
+  const vn = release.vns[0];
+  const rawTags = (vn.tags || []).sort((a, b) => b.rating - a.rating).slice(0, 5);
+  let tagStr = "";
+  if (rawTags.length > 0) {
+    const tagNames = rawTags.map(t => t.name).join(", ");
+    if (apiKey) {
+      log("태그 번역 중...", "run");
+      try {
+        tagStr = await translateWithGemini(tagNames, apiKey, "alias");
+        log("태그 번역 완료", "ok");
+      } catch (e) {
+        tagStr = tagNames;
+        log(e.message === "CONTENT_BLOCKED" ? "태그 번역 거부 — 원문 사용" : `태그 번역 실패: ${e.message} → 원문 사용`, "fail");
+      }
+    } else {
+      tagStr = tagNames;
+    }
+  }
+
+  // 게임 개요: release에 없는 필드라 VN 모드처럼 별도 호출 → 번역 → 완성된 폼으로 병합
+  log("게임 개요 조회 중...", "run");
+  let rawDesc = "";
+  try { rawDesc = await fetchVnDescription(vnId); }
+  catch (e) { log(`게임 개요 조회 실패: ${e.message}`, "fail"); }
+
+  let descHtml;
+  if (!rawDesc) { descHtml = "<p>(설명 없음)</p>"; }
+  else if (!apiKey) { log("API Key 없음 → 원문 삽입", "fail"); descHtml = descToHtml(rawDesc); }
+  else {
+    const model = document.getElementById("modelSelect").value;
+    log(`게임 개요 번역 중... (${model})`, "run");
+    try { descHtml = descToHtml(await translateWithGemini(rawDesc, apiKey, "desc")); log("번역 완료", "ok"); }
+    catch (e) {
+      log(e.message === "CONTENT_BLOCKED" ? "번역 거부 — Gemini 콘텐츠 필터로 인해 거부되었습니다. 원문 삽입" : `번역 실패: ${e.message} → 원문 삽입`, "fail");
+      descHtml = descToHtml(rawDesc);
+    }
+  }
+
+  const html = buildReleaseHtml(rId, release, developer, ageRatingStr, tagStr, descHtml);
+  log("생성 완료 ✓", "ok");
+  return html;
+}
+
 </script>
 </body>
 </html>

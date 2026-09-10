@@ -93,4 +93,23 @@ app.post("/translate", async (req, res) => {
   }
 });
 
+app.get("/imgproxy", async (req, res) => {
+  const url = req.query.url;
+  if (!url) return res.status(400).json({ error: "url missing" });
+  try {
+    const fetchFn = (...a) => import("node-fetch").then(({ default: f }) => f(...a));
+    const r = await fetchFn(url, {
+      headers: { "User-Agent": "Mozilla/5.0" }
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const buffer = await r.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString("base64");
+    const mime = r.headers.get("content-type") || "image/jpeg";
+    res.json({ dataUrl: `data:${mime};base64,${base64}` });
+  } catch (e) {
+    console.error("[imgproxy]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.listen(17373, () => console.log("VNDB proxy v1.1 running on :17373"));
