@@ -13,7 +13,7 @@
 **핵심 제약:**
 - 출력 대상이 kone.gg rich text 에디터. `ClipboardItem text/html` 방식으로 복사해야 붙여넣기 시 렌더링됨
 - kone.gg는 외부 이미지 URL, base64 img src 모두 저장 시 제거/차단함
-- kone.gg `<details>` 태그는 `open=""` 속성 + `<div data-type="detailsContent">` 구조 필수
+- kone.gg `<details>` 태그는 `<div data-type="detailsContent">` 구조를 유지하며, 게임 태그는 닫힘·게임 개요는 `open=""`으로 펼침
 - kone.gg 다크모드에서 inline style `background-color` 사용 금지 (텍스트 가독성 문제)
 - 릴리즈(r) URL 단독 입력 시 **VN과 완전히 다른 전용 출력 폼**으로 처리됨 (v1.3) — 다중 입력에 섞인 경우는 기존 VN 집계 포맷 유지
 - VNDB Kana API에는 VN relations(관련제품) 필드가 없음 — 공식 문서 확인됨, 향후에도 이 필드 요청 들어오면 API 미지원 사실부터 짚을 것
@@ -63,7 +63,9 @@ localhost:17373 (main.js 인라인 Express 서버)
 
 - `startServer()` 안에 Express 라우트 전부 포함
 - `dialog` import 추가됨
-- `/translate` 엔드포인트: `req.body.model`로 동적 모델 선택, 기본값 `gemini-3.5-flash`
+- `/translate` 엔드포인트: allowlist 내 `req.body.model`로 동적 모델 선택, 기본값 `gemini-3.5-flash-lite`
+- 무료 API의 429/일시 장애는 한 번 재시도하며, 선택 모델 사용 불가 시 기본 모델로 fallback
+- 안전 정책 차단은 fallback하지 않고 `CONTENT_BLOCKED`로 반환
 - 창 위치/크기: `userData/window-state.json` 저장/복원
 
 ---
@@ -79,9 +81,9 @@ localhost:17373 (main.js 인라인 Express 서버)
 | `run()` | 단일/다중/릴리즈 분기 후 처리 |
 | `buildHtml(...)` | VN 단일 모드 최종 HTML 생성 |
 | `fetchVndb(vnId)` | VN 데이터 조회 |
-| `fetchPublishers(vnId)` | 퍼블리셔 조회 → `[JP] 이름` 형식 (다중 릴리즈 언어 집계) |
+| `fetchPublishers(vnId)` | 퍼블리셔 조회 → JP/EN/CN만 언어별 집계하고 실제 존재하는 항목만 출력 |
 | `fetchAgeRating(vnId)` | 연령등급 조회 (VN의 ja 릴리즈 집계). null/0 → 전연령 |
-| `translateWithGemini(text, apiKey, mode)` | Gemini 번역. mode: desc/alias |
+| `translateWithGemini(text, apiKey, mode)` | Gemini 번역. mode: desc/alias/tags |
 | `copyAsRichText(html)` | ClipboardItem text/html 방식 복사 |
 | `buildImagePool(vnData)` | 이미지 URL 풀 생성 (safe/adult) |
 
@@ -104,7 +106,7 @@ localhost:17373 (main.js 인라인 Express 서버)
 | `fetchReleaseFull(rId)` | `/release` 단일 호출. title/alttitle/minage/released/producers + 중첩 `vns.rating/vns.votecount/vns.tags.*` 한 번에 조회 |
 | `fetchVnDeveloper(vnId)` | 릴리즈에 developer 표시 없을 때만 `/vn`에서 `developers.name` 별도 조회 |
 | `fetchVnDescription(vnId)` | `/vn`에서 `description` 별도 조회 (release 객체엔 없는 필드) |
-| `formatReleasePublisher(release)` | 릴리즈 자체 언어 기준 단순 포맷 (`[JP] 이름`, VN 모드처럼 다중 릴리즈 집계 안 함) |
+| `formatReleasePublisher(release)` | 릴리즈 자체 언어 중 JP/EN/CN만 실제 존재하는 순서대로 포맷 |
 | `formatReleaseAge(minage)` | null이면 fallback 필요 신호로 null 반환, 0이면 전연령 |
 | `buildReleaseHtml(rId, release, developer, ageRatingStr, tagStr, descHtml)` | 릴리즈 모드 최종 HTML 생성 |
 | `runRelease(rId, apiKey, log)` | 릴리즈 모드 메인 진입점. 개발사/연령등급/개요 순으로 빈 값 보강 후 병합 |
@@ -146,14 +148,14 @@ VN 단일 파이프라인 (7단계, 변경 없음):
 3. fetchPublishers() + fetchAgeRating() 병렬
 4. 별칭 번역 (Gemini alias)
 5. Description 번역 (Gemini desc)
-6. 태그 상위 5개 번역 (Gemini alias)
+6. 태그 상위 5개 번역 (Gemini tags) + VNDB 원문 링크 병기
 7. buildHtml() → 클립보드 복사
 
 릴리즈 단일 파이프라인 (runRelease, v1.3 신규):
 1. fetchReleaseFull() — 릴리즈 데이터 (VN 중첩 필드 포함, 단일 호출)
 2. 개발사 보강 — 릴리즈에 없으면 fetchVnDeveloper() 별도 호출
 3. 연령등급 보강 — release.minage null이면 fetchAgeRating() 재사용
-4. 태그 번역 (Gemini alias, vns.tags에서 이미 조회됨)
+4. 태그 번역 (Gemini tags, vns.tags에서 이미 조회됨) + VNDB 원문 링크 병기
 5. 개요 조회 + 번역 — fetchVnDescription() 별도 호출 → Gemini desc 번역
 6. buildReleaseHtml() → 클립보드 복사
 ```
@@ -164,44 +166,38 @@ VN 단일 파이프라인 (7단계, 변경 없음):
 
 ### 단일 VN 모드 (변경 없음)
 ```
-[이미지] 플레이스홀더
+빈 문단 (이미지 수동 삽입 공간)
 
 <table style 왼쪽열 width:100px>
-  원제 / 개발사 / 퍼블리셔([JP] 형식) / 별칭 / VNDB링크(정규화된 URL)
+  원제 / 개발사 / 퍼블리셔(JP/EN/CN 중 존재 항목) / 별칭 / VNDB링크(정규화된 URL)
   플레이타임 / 연령등급(전연령 포함) / 평점
-  게임태그 (details open="" + div data-type="detailsContent")
+  게임태그 (VNDB 원문 링크 + 한국어 번역, 기본 닫힘 details)
 </table>
-
-[내용]
-
 <details open=""><summary>게임 개요(VNDB)</summary>
   <div data-type="detailsContent"><p>...</p></div>
 </details>
 
-<hr>
-＊한패출처 :
-＊링크 :
+📌 한패출처 : (굵게)
+🔗 링크 : (굵게)
+<hr> + 사용자 입력 여백
 ```
 
 ### 단일 릴리즈 모드 (v1.3 신규)
 ```
-[이미지] 플레이스홀더
+빈 문단 (이미지 수동 삽입 공간)
 
 <table style 왼쪽열 width:100px>
   타이틀(release.title) / 원제(release.alttitle) / 개발사 / 퍼블리셔(단순 포맷)
   VNDB링크(입력된 r주소) / 발매일 / 연령등급 / 평점
-  게임태그 (details open="" + div data-type="detailsContent")
+  게임태그 (VNDB 원문 링크 + 한국어 번역, 기본 닫힘 details)
 </table>
-
-[내용]
-
 <details open=""><summary>게임 개요(VNDB)</summary>
   <div data-type="detailsContent"><p>...</p></div>
 </details>
 
-<hr>
-＊한패출처 :
-＊링크 :
+📌 한패출처 : (굵게)
+🔗 링크 : (굵게)
+<hr> + 사용자 입력 여백
 ```
 관련제품(Relation) 행 없음 — API 미지원으로 제외됨.
 
@@ -218,13 +214,16 @@ VN 단일 파이프라인 (7단계, 변경 없음):
 
 ---
 
-## 9. Gemini 모델 목록 (v1.3 기준, 변경 없음)
+## 9. Gemini 모델 목록 (v1.4)
 
 | 드롭다운 표시 | API 모델 스트링 |
 |------|------|
-| gemini-3.5-flash (기본) | `gemini-3.5-flash` |
-| gemini-3.1-flash-lite | `gemini-3.1-flash-lite` |
-| gemini-3.1-pro | `gemini-3.1-pro` |
+| gemini-3.5-flash-lite (기본·번역 권장) | `gemini-3.5-flash-lite` |
+| gemini-3.8-flash (고품질) | `gemini-3.8-flash` |
+| gemini-3.1-flash-lite (호환) | `gemini-3.1-flash-lite` |
+| gemini-3.1-pro-preview | `gemini-3.1-pro-preview` |
+
+`gemini-3.8-flash` 번역 요청은 불필요한 지연과 thinking 토큰을 줄이기 위해 thinking level `low`를 사용한다. 기존 localStorage 값 `gemini-3.5-flash`와 `gemini-3.1-pro`는 각각 새 기본 모델과 올바른 preview ID로 자동 이관한다.
 
 ---
 
@@ -236,7 +235,7 @@ VN 단일 파이프라인 (7단계, 변경 없음):
 | `gemini_model` | 저장됨 |
 | `upload_mode` | 저장됨 |
 | `image_mode` | 저장됨 |
-| `img_save_path` | **저장 안 함** — 배포 오염 방지 |
+| `img_save_path` | 사용자 PC에 저장됨. 배포 EXE에는 실제 경로가 포함되지 않음 |
 
 ---
 

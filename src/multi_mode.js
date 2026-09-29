@@ -14,7 +14,7 @@
  *   <br><hr><br>
  *   ...
  *   [게임n 테이블]
- *   ＊ 링크 :
+ *   🔗 링크 :
  *
  * 테이블 항목: 제목(병합), 이미지(병합), 원제, 개발사, VNDB, 플레이타임, 평점, 게임태그, 한패출처, 특이사항
  * 퍼블리셔/연령등급/별칭 제외 (다중 모드 전용 스펙)
@@ -68,7 +68,7 @@ async function fetchVndbMulti(vnId) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       filters: ["id", "=", vnId],
-      fields: "title, alttitle, description, developers.name, rating, votecount, length, length_minutes, tags.name, tags.rating, tags.spoiler"
+      fields: "title, alttitle, description, developers.name, rating, votecount, length, length_minutes, tags.id, tags.name, tags.rating, tags.spoiler"
     })
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -81,7 +81,7 @@ async function fetchVndbMulti(vnId) {
 async function translateTagsMulti(tagNames, apiKey, vnId) {
   if (!apiKey || !tagNames) return tagNames;
   try {
-    return await translateWithGemini(tagNames, apiKey, "alias");
+    return await translateWithGemini(tagNames, apiKey, "tags");
   } catch (e) {
     log(`${vnId} — 태그 번역 실패: ${e.message} → 원문 사용`, "fail");
     return tagNames;
@@ -90,7 +90,7 @@ async function translateTagsMulti(tagNames, apiKey, vnId) {
 
 // ---- 단일 게임 테이블 HTML 생성 ----
 
-function buildMultiGameTable(vnId, vnData, tagStr, displayUrl) {
+function buildMultiGameTable(vnId, vnData, tagHtml, displayUrl) {
   const originalTitle = vnData.alttitle || vnData.title || "미상";
   const developer = vnData.developers?.map(d => d.name).join(", ") || "미상";
   const vnUrl = displayUrl || `https://vndb.org/${vnId}`;
@@ -100,8 +100,8 @@ function buildMultiGameTable(vnId, vnData, tagStr, displayUrl) {
   const ratingStr = rating ? `${(rating / 10).toFixed(2)} / 10.00` : "정보 없음";
   const voteStr = votecount ? `${votecount.toLocaleString()}표` : "정보 없음";
   const tw = 'style="width:100px;"';
-  const tagRow = tagStr
-    ? `<tr><td ${tw}><b>게임 태그</b></td><td><details open=""><summary>스포 주의 (클릭하여 펼치기)</summary><div data-type="detailsContent">${tagStr.split(",").map(t => `<p>${t.trim()}</p>`).join("\n")}</div></details></td></tr>`
+  const tagRow = tagHtml
+    ? `<tr><td ${tw}><b>게임 태그</b></td><td><details><summary>스포 주의 (클릭하여 펼치기)</summary><div data-type="detailsContent">${tagHtml}</div></details></td></tr>`
     : "";
   return `<table>
 <tr><td colspan="2"><b>제목</b></td></tr>
@@ -112,7 +112,7 @@ function buildMultiGameTable(vnId, vnData, tagStr, displayUrl) {
 <tr><td ${tw}><b>플레이 타임</b></td><td>${playStr}</td></tr>
 <tr><td ${tw}><b>평점</b></td><td>${ratingStr} (${voteStr})</td></tr>
 ${tagRow}
-<tr><td ${tw}><b>한패출처</b></td><td></td></tr>
+<tr><td ${tw}><b>📌 한패출처</b></td><td></td></tr>
 <tr><td ${tw}><b>특이사항</b></td><td></td></tr>
 </table>`;
 }
@@ -139,19 +139,17 @@ async function runMulti(resolvedTokens, apiKey) {
 
     // 태그 처리 (상위 5개, rating 내림차순)
     const rawTags = (vnData.tags || []).sort((a, b) => b.rating - a.rating).slice(0, 5);
-    let tagStr = "";
+    let translatedTags = "";
     if (rawTags.length > 0) {
-      const tagNames = rawTags.map(t => t.name).join(", ");
+      const tagNames = rawTags.map(t => t.name).join("\n");
       if (apiKey) {
         log(`${vnId} — 태그 번역 중...`, "run");
-        tagStr = await translateTagsMulti(tagNames, apiKey, vnId);
+        translatedTags = await translateTagsMulti(tagNames, apiKey, vnId);
         log(`${vnId} — 태그 완료`, "ok");
-      } else {
-        tagStr = tagNames;
       }
     }
 
-    tables.push(buildMultiGameTable(vnId, vnData, tagStr, displayUrl));
+    tables.push(buildMultiGameTable(vnId, vnData, buildTagHtml(rawTags, translatedTags), displayUrl));
   }
 
   if (!tables.length) {
@@ -159,8 +157,8 @@ async function runMulti(resolvedTokens, apiKey) {
     return null;
   }
 
-  // 게임 사이: <hr>, 마지막 뒤: ＊ 링크 :
-  const html = tables.join("\n<hr>\n") + "\n\n＊ 링크 : ";
+  // 게임 사이: <hr>, 마지막 뒤: 🔗 링크 : + 사용자 작성 영역
+  const html = tables.join("\n<hr>\n") + "\n\n<b>🔗 링크 :</b>\n<hr>\n<p><br></p>\n<br>";
   log(`다중 생성 완료 ✓ (${tables.length}개)`, "ok");
   return html;
 }

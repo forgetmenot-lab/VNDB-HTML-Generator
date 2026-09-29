@@ -20,13 +20,13 @@
  * (공식 문서: "Currently missing from the old API: VN relations, ...")
  *
  * 출력 구조:
- *   [이미지]
+ *   빈 문단 (이미지 수동 삽입 공간)
  *   <table>
  *     타이틀 / 원제 / 개발사 / 퍼블리셔 / VNDB(입력된 r주소) / 발매일 / 연령등급 / 평점 / 게임태그
  *   </table>
  *   <hr>
- *   ＊한패출처 :
- *   ＊링크 :
+ *   📌 한패출처 :
+ *   🔗 링크 :
  */
 
 // ---- 릴리즈 ID 추출 ----
@@ -53,7 +53,7 @@ async function fetchReleaseFull(rId) {
       fields: "title, alttitle, minage, released, languages.lang, " +
                "producers.name, producers.developer, producers.publisher, " +
                "vns.id, vns.title, vns.alttitle, vns.rating, vns.votecount, " +
-               "vns.tags.name, vns.tags.rating, vns.tags.spoiler, vns.tags.category"
+               "vns.tags.id, vns.tags.name, vns.tags.rating, vns.tags.spoiler, vns.tags.category"
     })
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -92,9 +92,10 @@ async function fetchVnDescription(vnId) {
 function formatReleasePublisher(release) {
   const pubs = (release.producers || []).filter(p => p.publisher).map(p => p.name);
   if (!pubs.length) return "미상";
-  const langs = (release.languages || []).map(l => l.lang);
-  const tag = langs.length ? (LANG_CODE[langs[0]] || langs[0].toUpperCase()) : "";
-  return tag ? `[${tag}] ${pubs.join(" & ")}` : pubs.join(" & ");
+  const releaseLangs = new Set((release.languages || []).map(l => l.lang));
+  const supported = ["ja", "en", "zh-Hans"].filter(lang => releaseLangs.has(lang));
+  if (!supported.length) return "미상";
+  return supported.map(lang => `[${LANG_CODE[lang]}] ${pubs.join(" & ")}`).join("\n");
 }
 
 // ---- 연령등급 포맷. null이면 fallback 필요 신호로 null 반환 ----
@@ -107,7 +108,7 @@ function formatReleaseAge(minage) {
 
 // ---- HTML 생성 ----
 
-function buildReleaseHtml(rId, release, developer, ageRatingStr, tagStr, descHtml) {
+function buildReleaseHtml(rId, release, developer, ageRatingStr, tagHtml, descHtml) {
   const vn = release.vns?.[0] || {};
   const releaseTitle = release.title || vn.title || "미상";
   const releaseAltTitle = release.alttitle || vn.alttitle || releaseTitle;
@@ -118,12 +119,11 @@ function buildReleaseHtml(rId, release, developer, ageRatingStr, tagStr, descHtm
   const voteStr = votecount ? `${votecount.toLocaleString()}표` : "정보 없음";
   const releaseUrl = `https://vndb.org/${rId}`;
   const th = 'style="width:100px;"';
-  const tagRow = tagStr
-    ? `<tr><td ${th}><b>게임 태그</b></td><td><details open=""><summary>스포 주의 (클릭하여 펼치기)</summary><div data-type="detailsContent">${tagStr.split(",").map(t => `<p>${t.trim()}</p>`).join("\n")}</div></details></td></tr>`
+  const tagRow = tagHtml
+    ? `<tr><td ${th}><b>게임 태그</b></td><td><details><summary>스포 주의 (클릭하여 펼치기)</summary><div data-type="detailsContent">${tagHtml}</div></details></td></tr>`
     : "";
 
-  return `[이미지]
-
+  return `<p><br></p>
 <table>
 <tr><td ${th}><b>타이틀</b></td><td>${releaseTitle}</td></tr>
 <tr><td ${th}><b>원제</b></td><td>${releaseAltTitle}</td></tr>
@@ -135,20 +135,18 @@ function buildReleaseHtml(rId, release, developer, ageRatingStr, tagStr, descHtm
 <tr><td ${th}><b>평점</b></td><td>${ratingStr} (${voteStr})</td></tr>
 ${tagRow}
 </table>
-<br>
-[내용]
-<br>
-<br>
 <details open=""><summary><b>게임 개요(VNDB)</b></summary><div data-type="detailsContent">
 ${descHtml}
 </div></details>
-
+<p><br></p>
+<br>
+<b>📌 한패출처 :</b>
+<br>
+<br>
+<b>🔗 링크 :</b>
 <hr>
-
-＊한패출처 : 
-<br>
-<br>
-＊링크 : `;
+<p><br></p>
+<br>`;
 }
 
 // ---- 릴리즈 모드 메인 진입점 ----
@@ -187,20 +185,17 @@ async function runRelease(rId, apiKey, log) {
   // 태그 번역 (VN 소속 필드, 이미 release 쿼리에서 중첩 조회됨)
   const vn = release.vns[0];
   const rawTags = (vn.tags || []).sort((a, b) => b.rating - a.rating).slice(0, 5);
-  let tagStr = "";
+  let translatedTags = "";
   if (rawTags.length > 0) {
-    const tagNames = rawTags.map(t => t.name).join(", ");
+    const tagNames = rawTags.map(t => t.name).join("\n");
     if (apiKey) {
       log("태그 번역 중...", "run");
       try {
-        tagStr = await translateWithGemini(tagNames, apiKey, "alias");
+        translatedTags = await translateWithGemini(tagNames, apiKey, "tags");
         log("태그 번역 완료", "ok");
       } catch (e) {
-        tagStr = tagNames;
         log(e.message === "CONTENT_BLOCKED" ? "태그 번역 거부 — 원문 사용" : `태그 번역 실패: ${e.message} → 원문 사용`, "fail");
       }
-    } else {
-      tagStr = tagNames;
     }
   }
 
@@ -223,7 +218,7 @@ async function runRelease(rId, apiKey, log) {
     }
   }
 
-  const html = buildReleaseHtml(rId, release, developer, ageRatingStr, tagStr, descHtml);
+  const html = buildReleaseHtml(rId, release, developer, ageRatingStr, buildTagHtml(rawTags, translatedTags), descHtml);
   log("생성 완료 ✓", "ok");
   return html;
 }

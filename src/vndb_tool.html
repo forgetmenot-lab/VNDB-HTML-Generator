@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VNDB → HTML Generator v1.3</title>
+<title>VNDB → HTML Generator v1.4</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap');
   :root {
@@ -110,7 +110,7 @@
 
 <!-- 헤더 -->
 <div class="app-header">
-  <h1>VNDB → HTML Generator <span>v1.3</span></h1>
+  <h1>VNDB → HTML Generator <span>v1.4</span></h1>
   <div class="server-status">
     <div class="status-dot" id="proxyDot"></div>
     <span class="status-text" id="proxyText">확인 중...</span>
@@ -144,9 +144,10 @@
       <div class="model-col">
         <div class="label">모델</div>
         <select id="modelSelect" onchange="saveModel()" style="width:auto;">
-          <option value="gemini-3.5-flash">gemini-3.5-flash (기본)</option>
-          <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
-          <option value="gemini-3.1-pro">gemini-3.1-pro</option>
+          <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (기본·번역 권장)</option>
+          <option value="gemini-3.8-flash">gemini-3.8-flash (고품질)</option>
+          <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (호환)</option>
+          <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
         </select>
       </div>
     </div>
@@ -228,12 +229,30 @@ window.addEventListener("DOMContentLoaded", () => {
   const savedModel  = localStorage.getItem("gemini_model");
   const savedUpload = localStorage.getItem("upload_mode");
   const savedImg    = localStorage.getItem("image_mode");
+  const savedPath   = localStorage.getItem("img_save_path");
 
-  if (savedKey)   document.getElementById("apiKeyInput").value = savedKey;
-  if (savedModel) document.getElementById("modelSelect").value = savedModel;
+  if (savedKey) document.getElementById("apiKeyInput").value = savedKey;
+  if (savedModel) {
+    const modelMigration = {
+      "gemini-3.5-flash": "gemini-3.5-flash-lite",
+      "gemini-3.1-pro": "gemini-3.1-pro-preview"
+    };
+    const migratedModel = modelMigration[savedModel] || savedModel;
+    const select = document.getElementById("modelSelect");
+    if ([...select.options].some(option => option.value === migratedModel)) {
+      select.value = migratedModel;
+      localStorage.setItem("gemini_model", migratedModel);
+    } else {
+      localStorage.removeItem("gemini_model");
+    }
+  }
   if (savedUpload === "1") { uploadEnabled = true; document.getElementById("uploadToggle").classList.add("on"); document.getElementById("folderSection").style.display = "block"; }
   if (savedImg === "adult") { imageMode = "adult"; document.getElementById("segSafe").classList.remove("active"); document.getElementById("segAdult").classList.add("active"); }
-  // img_save_path는 배포 시 오염 방지를 위해 세션마다 초기화 (저장 안 함)
+  if (savedPath) {
+    imgSavePath = savedPath;
+    document.getElementById("folderPathDisplay").textContent = imgSavePath;
+    document.getElementById("folderPathDisplay").style.color = "var(--text)";
+  }
 
   document.getElementById("urlInput").addEventListener("keydown", e => { if (e.key === "Enter") run(); });
   checkProxy();
@@ -274,6 +293,7 @@ async function selectFolder() {
   const d = await r.json();
   if (d.canceled) return;
   imgSavePath = d.folderPath;
+  localStorage.setItem("img_save_path", imgSavePath);
   document.getElementById("folderPathDisplay").textContent = imgSavePath;
   document.getElementById("folderPathDisplay").style.color = "var(--text)";
 }
@@ -381,18 +401,41 @@ function buildImagePool(vnData) {
   }
 }
 
-function buildHtml(url, originalTitle, developer, publisher, alias, rating, votecount, length, lengthMinutes, descHtml, ageRating, tagStr) {
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, ch => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[ch]);
+}
+
+function parseTagTranslations(text) {
+  return String(text || "").split(/\r?\n/).map(line => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim()).filter(Boolean);
+}
+
+function buildTagHtml(rawTags, translatedText = "") {
+  if (!rawTags.length) return "<p>This VN has no tags assigned to it (yet).</p>";
+  const translations = parseTagTranslations(translatedText);
+  return rawTags.map((tag, index) => {
+    const original = String(tag.name || "").trim();
+    const translated = translations[index] || "";
+    const label = tag.id
+      ? `<a href="https://vndb.org/${encodeURIComponent(tag.id)}">${escapeHtml(original)}</a>`
+      : escapeHtml(original);
+    const translation = translated && translated.toLocaleLowerCase() !== original.toLocaleLowerCase()
+      ? ` (${escapeHtml(translated)})`
+      : "";
+    return `<p>${label}${translation}</p>`;
+  }).join("\n");
+}
+
+function buildHtml(url, originalTitle, developer, publisher, alias, rating, votecount, length, lengthMinutes, descHtml, ageRating, tagHtml) {
   const ratingStr = rating ? `${(rating/10).toFixed(2)} / 10.00` : "정보 없음";
   const voteStr   = votecount ? `${votecount.toLocaleString()}표` : "정보 없음";
   const playStr   = formatPlayTime(length, lengthMinutes);
   const pubFmt    = publisher.split("\n").map(s=>s.trim()).filter(Boolean).map(s=>`<p>${s}</p>`).join("\n");
-  const imgSection = "[이미지]";
-  const footer = `<hr>\n\n＊한패출처 : \n<br>\n<br>\n＊링크 : `;
+  const topSpacing = "<p><br></p>";
+  const footer = `<p><br></p>\n<br>\n<b>📌 한패출처 :</b>\n<br>\n<br>\n<b>🔗 링크 :</b>\n<hr>\n<p><br></p>\n<br>`;
   const th = 'style="width:100px;"';
-  const tagRow = `<tr><td ${th}><b>게임 태그</b></td><td><details open=""><summary>스포 주의 (클릭하여 펼치기)</summary><div data-type="detailsContent">${tagStr.split(",").map(t=>`<p>${t.trim()}</p>`).join("\n")}</div></details></td></tr>`;
+  const tagRow = `<tr><td ${th}><b>게임 태그</b></td><td><details><summary>스포 주의 (클릭하여 펼치기)</summary><div data-type="detailsContent">${tagHtml}</div></details></td></tr>`;
 
-  return `${imgSection}
-
+  return `${topSpacing}
 <table>
 <tr><td ${th}><b>원제</b></td><td>${originalTitle}</td></tr>
 <tr><td ${th}><b>개발사</b></td><td>${developer}</td></tr>
@@ -404,19 +447,14 @@ function buildHtml(url, originalTitle, developer, publisher, alias, rating, vote
 <tr><td ${th}><b>평점</b></td><td>${ratingStr} (${voteStr})</td></tr>
 ${tagRow}
 </table>
-<br>
-[내용]
-<br>
-<br>
 <details open=""><summary><b>게임 개요(VNDB)</b></summary><div data-type="detailsContent">
 ${descHtml}
 </div></details>
-
 ${footer}`;
 }
 
 async function fetchVndb(vnId) {
-  const base = "title, alttitle, description, developers.name, aliases, rating, votecount, length, length_minutes, tags.name, tags.rating, tags.spoiler, tags.category";
+  const base = "title, alttitle, description, developers.name, aliases, rating, votecount, length, length_minutes, tags.id, tags.name, tags.rating, tags.spoiler, tags.category";
   const imgs = uploadEnabled ? ", image.url, image.sexual, screenshots.url, screenshots.sexual" : "";
   const r = await fetch(PROXY_VN, {
     method:"POST", headers:{"Content-Type":"application/json"},
@@ -480,10 +518,10 @@ async function fetchPublishers(vnId) {
       pubs.forEach(n=>langMap.get(lang).add(n));
     }
   }
-  if (!langMap.size) return "미상";
-  const order = ["ja","en","ko","zh-Hans","zh-Hant"];
-  const sorted = [...order.filter(l=>langMap.has(l)), ...[...langMap.keys()].filter(l=>!order.includes(l)).sort()];
-  return sorted.map(lang=>`[${LANG_CODE[lang]||lang.toUpperCase()}] ${[...langMap.get(lang)].join(" & ")}`).join("\n");
+  const supported = ["ja", "en", "zh-Hans"];
+  const available = supported.filter(lang => langMap.has(lang));
+  if (!available.length) return "미상";
+  return available.map(lang=>`[${LANG_CODE[lang]}] ${[...langMap.get(lang)].join(" & ")}`).join("\n");
 }
 
 async function translateWithGemini(text, apiKey, mode="desc") {
@@ -495,8 +533,19 @@ async function translateWithGemini(text, apiKey, mode="desc") {
   });
   const d = await r.json();
   if (d.error === "CONTENT_BLOCKED") throw new Error("CONTENT_BLOCKED");
-  if (!r.ok) throw new Error(d?.error||`HTTP ${r.status}`);
+  if (!r.ok) {
+    const labels = {
+      API_KEY_MISSING: "API 키가 입력되지 않았습니다",
+      API_KEY_INVALID: "API 키가 잘못되었거나 사용할 수 없습니다",
+      QUOTA_EXCEEDED: "무료 API 사용량 제한을 초과했습니다",
+      MODEL_UNAVAILABLE: "선택한 모델을 현재 프로젝트에서 사용할 수 없습니다",
+      SERVICE_UNAVAILABLE: "Gemini 서버가 일시적으로 응답하지 않습니다",
+      EMPTY_RESPONSE: "Gemini가 빈 번역 결과를 반환했습니다"
+    };
+    throw new Error(labels[d?.error] || d?.message || d?.error || `HTTP ${r.status}`);
+  }
   if (!d.translated) throw new Error("번역 결과 없음");
+  if (d.fallback && d.model) log(`선택 모델 사용 불가 → ${d.model}로 대체 번역`, "fail");
   return d.translated;
 }
 
@@ -664,19 +713,17 @@ async function run() {
 
   // 6. 태그 처리
   const rawTags = (vnData.tags||[]).sort((a,b)=>b.rating-a.rating).slice(0,5);
-  let tagStr = "This VN has no tags assigned to it (yet).";
+  let translatedTags = "";
   if (rawTags.length > 0) {
-    const tagNames = rawTags.map(t => t.name).join(", ");
+    const tagNames = rawTags.map(t => t.name).join("\n");
     if (!apiKey) {
-      tagStr = tagNames;
       log("API Key 없음 → 태그 원문 사용", "fail");
     } else {
       log("태그 번역 중...", "run");
       try {
-        tagStr = await translateWithGemini(tagNames, apiKey, "alias");
+        translatedTags = await translateWithGemini(tagNames, apiKey, "tags");
         log("태그 번역 완료", "ok");
       } catch(e) {
-        tagStr = tagNames;
         log(e.message==="CONTENT_BLOCKED" ? "태그 번역 거부 — 원문 사용" : `태그 번역 실패: ${e.message} → 원문 사용`, "fail");
       }
     }
@@ -685,7 +732,8 @@ async function run() {
   }
 
   // 7. HTML 생성 + 자동 복사
-  generatedHtml = buildHtml(`https://vndb.org/${vnId}`, originalTitle, developer, publisher, aliasResult, rating, votecount, length, lengthMinutes, descHtml, ageRating, tagStr);
+  const tagHtml = buildTagHtml(rawTags, translatedTags);
+  generatedHtml = buildHtml(`https://vndb.org/${vnId}`, originalTitle, developer, publisher, aliasResult, rating, votecount, length, lengthMinutes, descHtml, ageRating, tagHtml);
   document.getElementById("codeBox").textContent = generatedHtml;
   log("생성 완료 ✓", "ok");
 
@@ -727,7 +775,7 @@ function downloadTxt() {
  *   <br><hr><br>
  *   ...
  *   [게임n 테이블]
- *   ＊ 링크 :
+ *   🔗 링크 :
  *
  * 테이블 항목: 제목(병합), 이미지(병합), 원제, 개발사, VNDB, 플레이타임, 평점, 게임태그, 한패출처, 특이사항
  * 퍼블리셔/연령등급/별칭 제외 (다중 모드 전용 스펙)
@@ -781,7 +829,7 @@ async function fetchVndbMulti(vnId) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       filters: ["id", "=", vnId],
-      fields: "title, alttitle, description, developers.name, rating, votecount, length, length_minutes, tags.name, tags.rating, tags.spoiler"
+      fields: "title, alttitle, description, developers.name, rating, votecount, length, length_minutes, tags.id, tags.name, tags.rating, tags.spoiler"
     })
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -794,7 +842,7 @@ async function fetchVndbMulti(vnId) {
 async function translateTagsMulti(tagNames, apiKey, vnId) {
   if (!apiKey || !tagNames) return tagNames;
   try {
-    return await translateWithGemini(tagNames, apiKey, "alias");
+    return await translateWithGemini(tagNames, apiKey, "tags");
   } catch (e) {
     log(`${vnId} — 태그 번역 실패: ${e.message} → 원문 사용`, "fail");
     return tagNames;
@@ -803,7 +851,7 @@ async function translateTagsMulti(tagNames, apiKey, vnId) {
 
 // ---- 단일 게임 테이블 HTML 생성 ----
 
-function buildMultiGameTable(vnId, vnData, tagStr, displayUrl) {
+function buildMultiGameTable(vnId, vnData, tagHtml, displayUrl) {
   const originalTitle = vnData.alttitle || vnData.title || "미상";
   const developer = vnData.developers?.map(d => d.name).join(", ") || "미상";
   const vnUrl = displayUrl || `https://vndb.org/${vnId}`;
@@ -813,8 +861,8 @@ function buildMultiGameTable(vnId, vnData, tagStr, displayUrl) {
   const ratingStr = rating ? `${(rating / 10).toFixed(2)} / 10.00` : "정보 없음";
   const voteStr = votecount ? `${votecount.toLocaleString()}표` : "정보 없음";
   const tw = 'style="width:100px;"';
-  const tagRow = tagStr
-    ? `<tr><td ${tw}><b>게임 태그</b></td><td><details open=""><summary>스포 주의 (클릭하여 펼치기)</summary><div data-type="detailsContent">${tagStr.split(",").map(t => `<p>${t.trim()}</p>`).join("\n")}</div></details></td></tr>`
+  const tagRow = tagHtml
+    ? `<tr><td ${tw}><b>게임 태그</b></td><td><details><summary>스포 주의 (클릭하여 펼치기)</summary><div data-type="detailsContent">${tagHtml}</div></details></td></tr>`
     : "";
   return `<table>
 <tr><td colspan="2"><b>제목</b></td></tr>
@@ -825,7 +873,7 @@ function buildMultiGameTable(vnId, vnData, tagStr, displayUrl) {
 <tr><td ${tw}><b>플레이 타임</b></td><td>${playStr}</td></tr>
 <tr><td ${tw}><b>평점</b></td><td>${ratingStr} (${voteStr})</td></tr>
 ${tagRow}
-<tr><td ${tw}><b>한패출처</b></td><td></td></tr>
+<tr><td ${tw}><b>📌 한패출처</b></td><td></td></tr>
 <tr><td ${tw}><b>특이사항</b></td><td></td></tr>
 </table>`;
 }
@@ -852,19 +900,17 @@ async function runMulti(resolvedTokens, apiKey) {
 
     // 태그 처리 (상위 5개, rating 내림차순)
     const rawTags = (vnData.tags || []).sort((a, b) => b.rating - a.rating).slice(0, 5);
-    let tagStr = "";
+    let translatedTags = "";
     if (rawTags.length > 0) {
-      const tagNames = rawTags.map(t => t.name).join(", ");
+      const tagNames = rawTags.map(t => t.name).join("\n");
       if (apiKey) {
         log(`${vnId} — 태그 번역 중...`, "run");
-        tagStr = await translateTagsMulti(tagNames, apiKey, vnId);
+        translatedTags = await translateTagsMulti(tagNames, apiKey, vnId);
         log(`${vnId} — 태그 완료`, "ok");
-      } else {
-        tagStr = tagNames;
       }
     }
 
-    tables.push(buildMultiGameTable(vnId, vnData, tagStr, displayUrl));
+    tables.push(buildMultiGameTable(vnId, vnData, buildTagHtml(rawTags, translatedTags), displayUrl));
   }
 
   if (!tables.length) {
@@ -872,8 +918,8 @@ async function runMulti(resolvedTokens, apiKey) {
     return null;
   }
 
-  // 게임 사이: <hr>, 마지막 뒤: ＊ 링크 :
-  const html = tables.join("\n<hr>\n") + "\n\n＊ 링크 : ";
+  // 게임 사이: <hr>, 마지막 뒤: 🔗 링크 : + 사용자 작성 영역
+  const html = tables.join("\n<hr>\n") + "\n\n<b>🔗 링크 :</b>\n<hr>\n<p><br></p>\n<br>";
   log(`다중 생성 완료 ✓ (${tables.length}개)`, "ok");
   return html;
 }
@@ -916,7 +962,7 @@ async function fetchReleaseFull(rId) {
       fields: "title, alttitle, minage, released, languages.lang, " +
                "producers.name, producers.developer, producers.publisher, " +
                "vns.id, vns.title, vns.alttitle, vns.rating, vns.votecount, " +
-               "vns.tags.name, vns.tags.rating, vns.tags.spoiler, vns.tags.category"
+               "vns.tags.id, vns.tags.name, vns.tags.rating, vns.tags.spoiler, vns.tags.category"
     })
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -955,9 +1001,10 @@ async function fetchVnDescription(vnId) {
 function formatReleasePublisher(release) {
   const pubs = (release.producers || []).filter(p => p.publisher).map(p => p.name);
   if (!pubs.length) return "미상";
-  const langs = (release.languages || []).map(l => l.lang);
-  const tag = langs.length ? (LANG_CODE[langs[0]] || langs[0].toUpperCase()) : "";
-  return tag ? `[${tag}] ${pubs.join(" & ")}` : pubs.join(" & ");
+  const releaseLangs = new Set((release.languages || []).map(l => l.lang));
+  const supported = ["ja", "en", "zh-Hans"].filter(lang => releaseLangs.has(lang));
+  if (!supported.length) return "미상";
+  return supported.map(lang => `[${LANG_CODE[lang]}] ${pubs.join(" & ")}`).join("\n");
 }
 
 // ---- 연령등급 포맷. null이면 fallback 필요 신호로 null 반환 ----
@@ -970,7 +1017,7 @@ function formatReleaseAge(minage) {
 
 // ---- HTML 생성 ----
 
-function buildReleaseHtml(rId, release, developer, ageRatingStr, tagStr, descHtml) {
+function buildReleaseHtml(rId, release, developer, ageRatingStr, tagHtml, descHtml) {
   const vn = release.vns?.[0] || {};
   const releaseTitle = release.title || vn.title || "미상";
   const releaseAltTitle = release.alttitle || vn.alttitle || releaseTitle;
@@ -981,12 +1028,11 @@ function buildReleaseHtml(rId, release, developer, ageRatingStr, tagStr, descHtm
   const voteStr = votecount ? `${votecount.toLocaleString()}표` : "정보 없음";
   const releaseUrl = `https://vndb.org/${rId}`;
   const th = 'style="width:100px;"';
-  const tagRow = tagStr
-    ? `<tr><td ${th}><b>게임 태그</b></td><td><details open=""><summary>스포 주의 (클릭하여 펼치기)</summary><div data-type="detailsContent">${tagStr.split(",").map(t => `<p>${t.trim()}</p>`).join("\n")}</div></details></td></tr>`
+  const tagRow = tagHtml
+    ? `<tr><td ${th}><b>게임 태그</b></td><td><details><summary>스포 주의 (클릭하여 펼치기)</summary><div data-type="detailsContent">${tagHtml}</div></details></td></tr>`
     : "";
 
-  return `[이미지]
-
+  return `<p><br></p>
 <table>
 <tr><td ${th}><b>타이틀</b></td><td>${releaseTitle}</td></tr>
 <tr><td ${th}><b>원제</b></td><td>${releaseAltTitle}</td></tr>
@@ -998,20 +1044,18 @@ function buildReleaseHtml(rId, release, developer, ageRatingStr, tagStr, descHtm
 <tr><td ${th}><b>평점</b></td><td>${ratingStr} (${voteStr})</td></tr>
 ${tagRow}
 </table>
-<br>
-[내용]
-<br>
-<br>
 <details open=""><summary><b>게임 개요(VNDB)</b></summary><div data-type="detailsContent">
 ${descHtml}
 </div></details>
-
+<p><br></p>
+<br>
+<b>📌 한패출처 :</b>
+<br>
+<br>
+<b>🔗 링크 :</b>
 <hr>
-
-＊한패출처 : 
-<br>
-<br>
-＊링크 : `;
+<p><br></p>
+<br>`;
 }
 
 // ---- 릴리즈 모드 메인 진입점 ----
@@ -1050,20 +1094,17 @@ async function runRelease(rId, apiKey, log) {
   // 태그 번역 (VN 소속 필드, 이미 release 쿼리에서 중첩 조회됨)
   const vn = release.vns[0];
   const rawTags = (vn.tags || []).sort((a, b) => b.rating - a.rating).slice(0, 5);
-  let tagStr = "";
+  let translatedTags = "";
   if (rawTags.length > 0) {
-    const tagNames = rawTags.map(t => t.name).join(", ");
+    const tagNames = rawTags.map(t => t.name).join("\n");
     if (apiKey) {
       log("태그 번역 중...", "run");
       try {
-        tagStr = await translateWithGemini(tagNames, apiKey, "alias");
+        translatedTags = await translateWithGemini(tagNames, apiKey, "tags");
         log("태그 번역 완료", "ok");
       } catch (e) {
-        tagStr = tagNames;
         log(e.message === "CONTENT_BLOCKED" ? "태그 번역 거부 — 원문 사용" : `태그 번역 실패: ${e.message} → 원문 사용`, "fail");
       }
-    } else {
-      tagStr = tagNames;
     }
   }
 
@@ -1086,7 +1127,7 @@ async function runRelease(rId, apiKey, log) {
     }
   }
 
-  const html = buildReleaseHtml(rId, release, developer, ageRatingStr, tagStr, descHtml);
+  const html = buildReleaseHtml(rId, release, developer, ageRatingStr, buildTagHtml(rawTags, translatedTags), descHtml);
   log("생성 완료 ✓", "ok");
   return html;
 }
