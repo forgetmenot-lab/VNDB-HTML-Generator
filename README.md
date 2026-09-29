@@ -64,13 +64,3 @@ release_mode.js     # 릴리즈(r) 단독 입력 처리 참고용 (vndb_tool.htm
 
 - Node.js 18+
 - Gemini API Key (번역 기능 사용 시)
-
-
-## v1.3 릴리즈 검토 (2026-09-10)
-
-- 제공된 src.zip의 실제 인라인 코드에서 v1.3 기능을 확인했습니다.
-- 소스 위치는 저장소의 src/입니다. 설치 및 빌드 명령은 src/에서 실행합니다.
-- 패키지 버전을 1.3.0으로 정리하고, multi_mode.js를 실제 인라인 코드와 동기화했습니다.
-- 과거 문서에 언급된 image_routes.js, vndb_tool_image.js, IMAGE_UPLOAD.md는 이번 제공 자료에 없습니다. 이미지 구현은 main.js와 vndb_tool.html에 있습니다.
-- Gemini API 번역, kone.gg 붙여넣기와 Windows GUI 실사용은 이번 검토에서 검증하지 않았습니다. 기존의 빌드 가능 및 외부 서비스 관련 서술은 과거 인수인계 기록입니다.
-- 릴리즈 연령등급의 일본어판 fallback은 기존 알려진 제한으로 유지합니다.
